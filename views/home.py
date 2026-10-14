@@ -4,6 +4,9 @@ import streamlit as st
 def render_intro():
     if "intro_passed" not in st.session_state:
         st.session_state.intro_passed = False
+    if "enter" in st.query_params:
+        st.session_state.intro_passed = st.query_params.get("enter") == "true"
+        del st.query_params["enter"]
 
     if not st.session_state.intro_passed:
         st.markdown(
@@ -19,57 +22,78 @@ def render_intro():
                 width: 100vw; height: 100vh;
                 display: flex; flex-direction: column;
                 align-items: center; justify-content: center;
-                background-color: #F7F5F0;
+                background-color: var(--dasol-background);
                 z-index: 99999;
+                pointer-events: none;
             }
-            .dasol-logo-box {
-                display: flex; flex-direction: column;
-                align-items: center; text-align: center;
+            .st-key-intro_logo {
+                position: fixed;
+                z-index: 100000;
+                top: 50%;
+                left: 50%;
+                transform: translate(-50%, -50%);
+                width: max-content;
             }
-            .dasol-logo-link {
+            .st-key-intro_logo button {
+                width: max-content !important;
+                min-width: 0 !important;
+                padding: 0 !important;
+                background: transparent !important;
+                border: none !important;
+                box-shadow: none !important;
+                transition: transform 0.2s ease !important;
+            }
+            .st-key-intro_logo button:hover {
+                background: transparent !important;
+                border: none !important;
+                box-shadow: none !important;
+                transform: scale(1.02);
+            }
+            .st-key-intro_logo button p:first-child {
                 font-size: 4.5rem !important;
                 font-weight: 800 !important;
                 letter-spacing: 0.15em !important;
-                text-decoration: none !important;
-                margin-bottom: 2px !important;
-                display: inline-block;
-                background: linear-gradient(120deg, #2C2A29 30%, #FFFFFF 45%, #E8DCC4 50%, #FFFFFF 55%, #2C2A29 70%);
+                margin: 0 !important;
+                line-height: 1.1 !important;
+                background: linear-gradient(
+                    120deg,
+                    var(--dasol-text) 30%,
+                    #FFFFFF 45%,
+                    var(--dasol-accent-soft) 50%,
+                    #FFFFFF 55%,
+                    var(--dasol-text) 70%
+                );
                 background-size: 250% auto;
                 color: transparent;
                 -webkit-background-clip: text;
+                background-clip: text;
                 -webkit-text-fill-color: transparent;
-                animation: shineSweepRightToLeft 6.0s infinite cubic-bezier(0.25, 1, 0.5, 1);
+                animation: shineSweepRightToLeft 6s infinite cubic-bezier(0.25, 1, 0.5, 1);
                 text-shadow: 2px 3px 12px rgba(44, 42, 41, 0.12);
             }
-            .dasol-logo-link:hover {
-                transform: scale(1.02);
-                transition: transform 0.2s ease;
-            }
-            .dasol-sub-text {
-                font-size: 0.78rem; font-weight: 500;
-                letter-spacing: 0.38em; color: #8C8680;
-                margin-right: -0.38em; margin-top: -4px;
+            .st-key-intro_logo button p:last-child {
+                font-size: 0.78rem !important;
+                font-weight: 500 !important;
+                letter-spacing: 0.38em !important;
+                color: var(--dasol-muted) !important;
+                margin: -2px -0.38em 0 0 !important;
                 opacity: 0.85; text-transform: uppercase;
             }
             </style>
 
             <div class="intro-wrapper">
-                <div class="dasol-logo-box">
-                    <a href="?enter=true" class="dasol-logo-link">DASOL</a>
-                    <div class="dasol-sub-text">FIND A MOMENT</div>
-                </div>
             </div>
             """,
             unsafe_allow_html=True,
         )
+        with st.container(key="intro_logo"):
+            if st.button(
+                "DASOL\n\nFIND A MOMENT", key="enter_logo", use_container_width=False
+            ):
+                st.session_state.intro_passed = True
+                st.rerun()
 
-        query_params = st.query_params
-        if "enter" in query_params:
-            st.session_state.intro_passed = True
-            st.query_params.clear()
-            st.rerun()
-
-        st.stop()
+    return st.session_state.intro_passed
 
 
 def render_category_selection():
@@ -79,38 +103,39 @@ def render_category_selection():
         .main-logo { text-align: center; margin-top: 6vh; }
         .main-logo .logo-title {
             font-size: 4rem; font-weight: 800; letter-spacing: 0.2em;
-            color: #2C2A29; margin: 0; line-height: 1.05;
+            color: var(--dasol-text); margin: 0; line-height: 1.05;
         }
         .main-logo .logo-sub {
             font-size: 0.9rem; font-weight: 500; letter-spacing: 0.4em;
-            color: #8C8680; margin: 10px 0 0 0; text-transform: uppercase;
+            color: var(--dasol-muted); margin: 10px 0 0 0; text-transform: uppercase;
         }
         .category-head {
             width: 100%; max-width: 900px;
             margin: 7vh auto 22px auto; text-align: center;
         }
         .category-head .category-line {
-            width: 100%; height: 0; border-top: 0.5px solid #C9C2B8;
+            width: 100%; height: 0; border-top: 0.5px solid var(--dasol-border);
         }
         .category-head .category-title {
             font-size: 1.1rem; font-weight: 700; letter-spacing: 0.7em;
-            color: #8B5E3C; margin: 8px 0; padding-left: 0.7em;
+            color: var(--dasol-accent); margin: 8px 0; padding-left: 0.7em;
             text-transform: uppercase;
         }
 
         .st-key-card_run button,
         .st-key-card_media button {
-            width: 400px !important;
+            width: 100% !important;
+            min-width: 0 !important;
             max-width: 100% !important;
             height: 120px !important;
             min-height: 120px !important;
             max-height: 120px !important;
-            background-color: #FFFFFF !important;
-            color: #2C2A29 !important;
-            border: 1px solid #E6E2DD !important;
+            background-color: var(--dasol-surface) !important;
+            color: var(--dasol-text) !important;
+            border: 1px solid var(--dasol-border) !important;
             border-radius: 10px !important;
             box-shadow: 0 3px 10px rgba(44, 42, 41, 0.03) !important;
-            transition: all 0.25s ease !important;
+            transition: all var(--dasol-motion) ease !important;
             padding: 12px 16px !important;
             display: flex !important;
             flex-direction: column !important;
@@ -125,12 +150,18 @@ def render_category_selection():
             transform: translateY(-2px);
             box-shadow: 0 6px 16px rgba(44, 42, 41, 0.08) !important;
         }
+        .st-key-card_run button svg,
+        .st-key-card_media button svg,
+        .st-key-card_run button [data-testid="stIconMaterial"],
+        .st-key-card_media button [data-testid="stIconMaterial"] {
+            display: none !important;
+        }
         .st-key-card_run button p:first-child,
         .st-key-card_media button p:first-child {
             font-size: 16px !important;
             font-weight: 700 !important;
             letter-spacing: 0.14em !important;
-            color: #2C2A29 !important;
+            color: var(--dasol-text) !important;
             margin: 0 0 6px 0 !important;
             white-space: nowrap !important;
         }
@@ -138,7 +169,7 @@ def render_category_selection():
         .st-key-card_media button p:last-child {
             font-size: 12px !important;
             font-weight: 400 !important;
-            color: #8C8680 !important;
+            color: var(--dasol-muted) !important;
             margin: 0 !important;
             white-space: nowrap !important;
         }
@@ -158,7 +189,7 @@ def render_category_selection():
         unsafe_allow_html=True,
     )
 
-    _, mid, _ = st.columns([1, 3, 1])
+    _, mid, _ = st.columns([1, 3, 1], gap="small")
     with mid:
         b1, b2 = st.columns(2, gap="medium")
         with b1:

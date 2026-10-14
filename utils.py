@@ -54,8 +54,14 @@ def get_mime(filename):
         return "image/jpeg"
     if ext == "png":
         return "image/png"
+    if ext == "jxl":
+        return "image/jxl"
     if ext in ["mp4", "mov"]:
         return "video/mp4"
+    if ext == "avi":
+        return "video/x-msvideo"
+    if ext == "mkv":
+        return "video/x-matroska"
     if ext in ["cr2", "nef", "arw", "dng", "raw"]:
         return "image/x-adobe-dng"
     return "application/octet-stream"

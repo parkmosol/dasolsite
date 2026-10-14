@@ -4,6 +4,27 @@ from database import get_db
 from utils import calc_pace, parse_km, parse_time_str
 
 TODAY = dt.date.today()
+MOODS = ["GREAT", "GOOD", "SO SO", "BAD", "TERRIBLE"]
+
+
+@st.dialog("러닝 기록 삭제")
+def delete_running_log_dialog(log):
+    st.write(f"{log['date']} · {log['course']} 기록을 삭제할까요?")
+    confirm_col, cancel_col = st.columns(2)
+    with confirm_col:
+        if st.button("삭제", type="primary", use_container_width=True):
+            conn = get_db()
+            conn.execute("DELETE FROM running_logs WHERE id = ?", (log["id"],))
+            conn.commit()
+            conn.close()
+            st.session_state.pop("delete_running_id", None)
+            st.session_state.pop("selected_running_id", None)
+            st.success("기록이 삭제되었습니다.")
+            st.rerun()
+    with cancel_col:
+        if st.button("취소", use_container_width=True):
+            st.session_state.pop("delete_running_id", None)
+            st.rerun()
 
 
 @st.dialog("코스 관리")
@@ -39,6 +60,85 @@ def course_manager_dialog(courses_list):
             st.rerun()
 
 
+def render_running_log_editor(log, courses_list):
+    course_options = list(courses_list)
+    if log["course"] not in course_options:
+        course_options.insert(0, log["course"])
+
+    total_minutes, seconds = divmod(log["time_sec"], 60)
+    hours, minutes = divmod(total_minutes, 60)
+    time_value = (
+        f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+        if hours
+        else f"{minutes:02d}:{seconds:02d}"
+    )
+
+    with st.form(f"edit_run_form_{log['id']}"):
+        st.markdown("#### 러닝 기록 편집")
+        edit_date = st.date_input(
+            "날짜",
+            dt.date.fromisoformat(log["date"]),
+            key=f"edit_run_date_{log['id']}",
+        )
+        edit_course = st.selectbox(
+            "코스",
+            course_options,
+            index=course_options.index(log["course"]),
+            key=f"edit_run_course_{log['id']}",
+        )
+        edit_mood = st.selectbox(
+            "기분",
+            MOODS,
+            index=MOODS.index(log["mood"]) if log["mood"] in MOODS else 0,
+            key=f"edit_run_mood_{log['id']}",
+        )
+        edit_time = st.text_input(
+            "소요 시간", time_value, key=f"edit_run_time_{log['id']}"
+        )
+        edit_memo = st.text_area(
+            "메모", log["memo"] or "", key=f"edit_run_memo_{log['id']}"
+        )
+        save_col, cancel_col = st.columns([1, 1], gap="small")
+        with save_col:
+            save_edit = st.form_submit_button(
+                "변경 저장", type="primary", use_container_width=True
+            )
+        with cancel_col:
+            cancel_edit = st.form_submit_button("취소", use_container_width=True)
+
+    if save_edit:
+        edit_seconds, _ = parse_time_str(edit_time)
+        if edit_seconds is None:
+            st.error("시간 형식이 올바르지 않습니다. (예: 00:44:39 또는 4439)")
+        else:
+            conn = get_db()
+            conn.execute(
+                """
+                UPDATE running_logs
+                SET date = ?, mood = ?, course = ?, time_sec = ?, pace = ?, memo = ?
+                WHERE id = ?
+                """,
+                (
+                    edit_date.isoformat(),
+                    edit_mood,
+                    edit_course,
+                    edit_seconds,
+                    calc_pace(edit_course, edit_seconds),
+                    edit_memo,
+                    log["id"],
+                ),
+            )
+            conn.commit()
+            conn.close()
+            st.session_state.pop("edit_running_id", None)
+            st.session_state.pop("selected_running_id", None)
+            st.success("기록이 수정되었습니다.")
+            st.rerun()
+    if cancel_edit:
+        st.session_state.pop("edit_running_id", None)
+        st.rerun()
+
+
 def render_running_page():
     st.markdown(
         "<h1 style='font-weight: 800; font-size: 26px; margin-top: 0;'>러닝 일기</h1>",
@@ -58,34 +158,21 @@ def render_running_page():
     ).fetchall()
     conn.close()
 
-    mon = TODAY - dt.timedelta(days=TODAY.weekday())
-    sun = mon + dt.timedelta(days=6)
     prefix = TODAY.strftime("%Y-%m")
 
-    week_km = sum(
-        parse_km(it["course"])
-        for it in logs
-        if mon <= dt.date.fromisoformat(it["date"]) <= sun
-    )
-    month_cnt = sum(1 for it in logs if it["date"].startswith(prefix))
+    month_logs = [it for it in logs if it["date"].startswith(prefix)]
+    month_km = sum(parse_km(it["course"]) for it in month_logs)
     total_km = sum(parse_km(it["course"]) for it in logs)
-
-    dates = {it["date"] for it in logs}
-    cur_d = TODAY if TODAY.isoformat() in dates else TODAY - dt.timedelta(days=1)
-    streak = 0
-    while cur_d.isoformat() in dates:
-        streak += 1
-        cur_d -= dt.timedelta(days=1)
 
     c1, c2, c3, c4 = st.columns(4)
     with c1:
-        st.metric("이번 주 거리", f"{week_km:.1f} km")
+        st.metric("이번 달 누적 거리", f"{month_km:.1f} km")
     with c2:
-        st.metric("이번 달 러닝", f"{month_cnt}회")
+        st.metric("이번 달 러닝", f"{len(month_logs)}회")
     with c3:
-        st.metric("누적 거리", f"{total_km:.1f} km")
+        st.metric("총 누적 거리", f"{total_km:.1f} km")
     with c4:
-        st.metric("연속 러닝", f"{streak}일째")
+        st.metric("총 러닝", f"{len(logs)}회")
 
     st.markdown("<hr style='border:0.5px solid #E6E2DD;'>", unsafe_allow_html=True)
 
@@ -105,12 +192,70 @@ def render_running_page():
         }
         .st-key-course_gear button:hover {
             background: transparent !important;
-            color: #8B5E3C !important;
+            color: var(--dasol-accent) !important;
+        }
+        div[class*="st-key-run_cell_"] button {
+            width: 100% !important;
+            background: transparent !important;
+            color: var(--dasol-text) !important;
+            border: none !important;
+            border-bottom: 1px solid var(--dasol-border) !important;
+            border-radius: 0 !important;
+            text-align: center !important;
+            justify-content: center !important;
+            padding: 6px 2px !important;
+            box-shadow: none !important;
+            font-size: 11px !important;
+            white-space: nowrap !important;
+            height: 40px !important;
+            min-height: 40px !important;
+        }
+        div[class*="st-key-run_cell_"] button p {
+            font-size: 11px !important;
+            white-space: nowrap !important;
+            overflow: hidden !important;
+            text-overflow: ellipsis !important;
+        }
+        div[class*="st-key-run_cell_"] button:hover {
+            background: var(--dasol-accent-soft) !important;
+            border-bottom-color: var(--dasol-accent) !important;
+            color: var(--dasol-text) !important;
+        }
+        div[class*="st-key-run_cell_"][class*="_mood"] button {
+            color: var(--mood-color) !important;
+            font-weight: 700 !important;
+        }
+        .run-table-heading {
+            height: 40px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 0 2px;
+            border-bottom: 1px solid var(--dasol-border);
+            color: var(--dasol-muted);
+            font-size: 12px;
+            font-weight: 700;
+            white-space: nowrap;
         }
         </style>
         """,
         unsafe_allow_html=True,
     )
+    mood_colors = {
+        "GREAT": "#1F8A5B",
+        "GOOD": "#3E7FC4",
+        "SO SO": "#B8860B",
+        "BAD": "#D9782D",
+        "TERRIBLE": "#C8443F",
+    }
+    mood_rules = "".join(
+        f".st-key-run_cell_{it['id']}_mood button "
+        f"{{ --mood-color: {mood_colors.get(it['mood'], 'var(--dasol-text)')}; }}"
+        for it in logs
+    )
+    if mood_rules:
+        st.markdown(f"<style>{mood_rules}</style>", unsafe_allow_html=True)
+
     t_col1, t_col2, t_col3, t_col4 = st.columns(
         [3, 0.5, 1.5, 0.01], vertical_alignment="center", gap="small"
     )
@@ -190,31 +335,20 @@ def render_running_page():
     ]
     filtered_logs.sort(key=lambda x: x["date"], reverse=True)
 
-    mood_colors = {
-        "GREAT": "#1F8A5B",
-        "GOOD": "#3E7FC4",
-        "SO SO": "#B8860B",
-        "BAD": "#D9782D",
-        "TERRIBLE": "#C8443F",
-    }
-
     if filtered_logs:
-        st.markdown(
-            """
-            <div style='display:flex; justify-content:space-between; align-items:center; color:#7A7570; font-size:13px; font-weight:700; padding: 10px 0px; border-bottom: 1px solid #E6E2DD;'>
-                <div style='width:15%; text-align:center;'>날짜</div>
-                <div style='width:25%; text-align:center;'>코스</div>
-                <div style='width:10%; text-align:center;'>기분</div>
-                <div style='width:15%; text-align:center;'>시간</div>
-                <div style='width:15%; text-align:center;'>페이스</div>
-                <div style='width:20%; text-align:center;'>메모</div>
-            </div>
-            """,
-            unsafe_allow_html=True,
+        header_columns = st.columns(
+            [1.1, 2.2, 0.85, 1.05, 1.2, 1.8], gap="small"
         )
+        for column, heading in zip(
+            header_columns, ["날짜", "코스", "기분", "시간", "페이스", "메모"]
+        ):
+            with column:
+                st.markdown(
+                    f"<div class='run-table-heading'>{heading}</div>",
+                    unsafe_allow_html=True,
+                )
 
         for it in filtered_logs:
-            m_col = mood_colors.get(it["mood"], "#2C2A29")
             m_sec, s_sec = divmod(it["time_sec"], 60)
             h_sec, m_sec = divmod(m_sec, 60)
             t_str = (
@@ -222,20 +356,48 @@ def render_running_page():
                 if h_sec
                 else f"{m_sec:02d}:{s_sec:02d}"
             )
-            memo_text = it["memo"] if it["memo"] else "-"
+            columns = st.columns([1.1, 2.2, 0.85, 1.05, 1.2, 1.8], gap="small")
+            values = [
+                ("date", it["date"]),
+                ("course", it["course"]),
+                ("mood", it["mood"]),
+                ("time", t_str),
+                ("pace", it["pace"]),
+                ("memo", it["memo"] or "-"),
+            ]
+            for column, (field, value) in zip(columns, values):
+                with column:
+                    with st.container(key=f"run_cell_{it['id']}_{field}"):
+                        if st.button(
+                            value,
+                            key=f"run_value_{it['id']}_{field}",
+                            use_container_width=True,
+                        ):
+                            if st.session_state.get("selected_running_id") == it["id"]:
+                                st.session_state.pop("selected_running_id", None)
+                                st.session_state.pop("edit_running_id", None)
+                            else:
+                                st.session_state.selected_running_id = it["id"]
+                                st.session_state.pop("edit_running_id", None)
+                            st.rerun()
 
-            st.markdown(
-                f"""
-                <div style='display:flex; justify-content:space-between; align-items:center; font-size:14px; padding: 12px 0px; border-bottom: 1px solid #EFECE6;'>
-                    <div class='safe-text-block' style='width:15%; text-align:center;'>{it['date']}</div>
-                    <div class='safe-text-block' style='width:25%; text-align:center;'>{it['course']}</div>
-                    <div class='safe-text-block' style='width:10%; text-align:center; color:{m_col}; font-weight:700;'>{it['mood']}</div>
-                    <div class='safe-text-block' style='width:15%; text-align:center;'>{t_str}</div>
-                    <div class='safe-text-block' style='width:15%; text-align:center;'>{it['pace']}</div>
-                    <div class='safe-text-block' style='width:20%; text-align:center; color:#7A7570;'>{memo_text}</div>
-                </div>
-                """,
-                unsafe_allow_html=True,
-            )
+            if st.session_state.get("selected_running_id") == it["id"]:
+                action_columns = st.columns([0.65, 0.65, 6], gap="small")
+                with action_columns[0]:
+                    if st.button("편집", key=f"edit_run_{it['id']}"):
+                        st.session_state.edit_running_id = it["id"]
+                        st.rerun()
+                with action_columns[1]:
+                    if st.button("삭제", key=f"delete_run_{it['id']}"):
+                        st.session_state.delete_running_id = it["id"]
+                        st.rerun()
+                if st.session_state.get("edit_running_id") == it["id"]:
+                    render_running_log_editor(it, courses_list)
     else:
         st.info("등록된 러닝 기록이 없습니다.")
+
+    delete_id = st.session_state.get("delete_running_id")
+    if delete_id is not None:
+        delete_log = next((it for it in logs if it["id"] == delete_id), None)
+        if delete_log is not None:
+            delete_running_log_dialog(delete_log)
