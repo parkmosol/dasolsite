@@ -52,7 +52,6 @@ _LOCATION_PICKER = st.components.v2.component(
             font-family: inherit;
         }
     """,
-    js="""
 export default function (component) {
   const { data, parentElement, setStateValue } = component
   const mapElement = parentElement.querySelector(".place-location-map")
@@ -61,38 +60,60 @@ export default function (component) {
 
   const doc = parentElement.ownerDocument
   const view = doc.defaultView
-  if (!view.L) {
-    if (!view.__dasolLeafletPromise) {
-      const root = parentElement.getRootNode()
-      const stylesheetReady = new Promise((resolve, reject) => {
-        const stylesheet = doc.createElement("link")
-        stylesheet.rel = "stylesheet"
-        stylesheet.href = "https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
-        stylesheet.onload = resolve
-        stylesheet.onerror = reject
-        root.appendChild(stylesheet)
-      })
-      const scriptReady = new Promise((resolve, reject) => {
-        const script = doc.createElement("script")
-        script.src = "https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
-        script.onload = () => resolve(view.L)
-        script.onerror = reject
+  const LEAFLET_CSS = "https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+  const LEAFLET_JS = "https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+
+  function loadCss() {
+    return new Promise((resolve, reject) => {
+      let link = doc.querySelector("link[data-dasol-leaflet]")
+      if (link && link.sheet) return resolve()
+      if (!link) {
+        link = doc.createElement("link")
+        link.rel = "stylesheet"
+        link.href = LEAFLET_CSS
+        link.setAttribute("data-dasol-leaflet", "")
+        doc.head.appendChild(link)
+      }
+      link.addEventListener("load", () => resolve(), { once: true })
+      link.addEventListener("error", reject, { once: true })
+    })
+  }
+
+  function loadScript() {
+    return new Promise((resolve, reject) => {
+      if (view.L) return resolve(view.L)
+      let script = doc.querySelector("script[data-dasol-leaflet]")
+      if (!script) {
+        script = doc.createElement("script")
+        script.src = LEAFLET_JS
+        script.setAttribute("data-dasol-leaflet", "")
         doc.head.appendChild(script)
-      })
-      view.__dasolLeafletPromise = Promise.all([
-        stylesheetReady,
-        scriptReady,
-      ]).then(([, leaflet]) => leaflet)
+      }
+      script.addEventListener("load", () => resolve(view.L), { once: true })
+      script.addEventListener("error", reject, { once: true })
+    })
+  }
+
+  function loadLeaflet() {
+    if (!view.__dasolLeafletPromise) {
+      view.__dasolLeafletPromise = Promise.all([loadCss(), loadScript()])
+        .then(([, L]) => L)
+        .catch(error => {
+          view.__dasolLeafletPromise = null // 실패 시 다음 렌더에서 재시도
+          throw error
+        })
     }
-    view.__dasolLeafletPromise.then(initialize).catch(error => {
+    return view.__dasolLeafletPromise
+  }
+
+  loadLeaflet()
+    .then(initialize)
+    .catch(error => {
       console.error("DASOL place location map failed to initialize.", error)
       if (!mapElement.__dasolMap) {
         hint.textContent = "지도를 불러오지 못했습니다. 네트워크 연결을 확인해 주세요."
       }
     })
-  } else {
-    initialize(view.L)
-  }
 
   function initialize(L) {
     let map = mapElement.__dasolMap
@@ -100,27 +121,26 @@ export default function (component) {
       const hasInitialLocation =
         Number.isFinite(data.location?.latitude) &&
         Number.isFinite(data.location?.longitude)
-      map = L.map(mapElement).setView(
+      map = L.map(mapElement, { minZoom: 1, maxBoundsViscosity: 1.0 }).setView(
         hasInitialLocation
           ? [data.location.latitude, data.location.longitude]
           : [20, 0],
         hasInitialLocation ? 5 : 2,
       )
-      map.setMinZoom(1)
       map.setMaxBounds([[-85, -180], [85, 180]])
-      map.options.maxBoundsViscosity = 1
-      const resizeObserver = new ResizeObserver(() => {
-          map.invalidateSize();
-      });
-      resizeObserver.observe(mapElement);
+
+      // CARTO 타일: 임베디드 환경에서도 안정적으로 로드됩니다.
       L.tileLayer(
-        "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",
+        "https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png",
         {
-          attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
+          attribution:
+            '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>',
+          subdomains: "abcd",
           maxZoom: 19,
           noWrap: true,
         },
       ).addTo(map)
+
       mapElement.__dasolMap = map
       map.on("click", event => {
         setStateValue("location", {
@@ -129,16 +149,20 @@ export default function (component) {
         })
       })
       mapElement.__dasolMarker = null
+
+      // 컨테이너 크기 변화에 맞춰 지도 크기 재계산 (옵저버는 한 번만 등록)
+      const observer = new view.ResizeObserver(() => {
+        view.requestAnimationFrame(() => map.invalidateSize({ pan: false }))
+      })
+      observer.observe(mapElement)
+      mapElement.__dasolResizeObserver = observer
     }
 
     const hasLocation =
       Number.isFinite(data.location?.latitude) &&
       Number.isFinite(data.location?.longitude)
     if (hasLocation) {
-      const location = [
-        data.location.latitude,
-        data.location.longitude,
-      ]
+      const location = [data.location.latitude, data.location.longitude]
       if (mapElement.__dasolMarker) {
         mapElement.__dasolMarker.setLatLng(location)
       } else {
@@ -154,18 +178,9 @@ export default function (component) {
     } else {
       hint.textContent = "지도를 클릭해 장소 위치를 선택하세요."
     }
-    if (!mapElement.__dasolResizeObserver) {
-      mapElement.__dasolResizeObserver = new view.ResizeObserver(() => {
-        view.requestAnimationFrame(() => map.invalidateSize({ pan: false }))
-      })
-      mapElement.__dasolResizeObserver.observe(mapElement.parentElement)
-      mapElement.__dasolResizeObserver.observe(mapElement)
-    }
     view.requestAnimationFrame(() => map.invalidateSize({ pan: false }))
   }
-}
-""",
-)
+})
 
 
 def _set_selected_place(place_id, update_widget=True):
