@@ -25,6 +25,14 @@ _LOCATION_PICKER = st.components.v2.component(
     "dasol.place_location_picker",
     html="""
         <div class="place-location-picker">
+            <div class="place-location-search">
+                <input
+                    type="text"
+                    class="place-location-input"
+                    placeholder="장소 검색 (예: 마쓰야마, 일본)"
+                />
+                <button type="button" class="place-location-search-button">검색</button>
+            </div>
             <div class="place-location-map"></div>
             <p class="place-location-hint">지도를 클릭해 장소 위치를 선택하세요.</p>
         </div>
@@ -34,6 +42,42 @@ _LOCATION_PICKER = st.components.v2.component(
             box-sizing: border-box;
             width: 100%;
             padding: 4px 0;
+        }
+        .place-location-search {
+            display: flex;
+            gap: 8px;
+            margin-bottom: 8px;
+        }
+        .place-location-input {
+            flex: 1;
+            box-sizing: border-box;
+            min-width: 0;
+            padding: 8px 12px;
+            border: 1px solid var(--st-color-border);
+            border-radius: 6px;
+            font-size: 0.9rem;
+            font-family: inherit;
+            background: #ffffff;
+            color: inherit;
+        }
+        .place-location-input:focus {
+            outline: none;
+            border-color: #B77B43;
+        }
+        .place-location-search-button {
+            padding: 8px 16px;
+            border: none;
+            border-radius: 6px;
+            background: #3d3530;
+            color: #ffffff;
+            font-size: 0.9rem;
+            font-family: inherit;
+            cursor: pointer;
+            white-space: nowrap;
+        }
+        .place-location-search-button:disabled {
+            opacity: 0.6;
+            cursor: default;
         }
         .place-location-map {
             box-sizing: border-box;
@@ -56,13 +100,16 @@ export default function (component) {
   const { data, parentElement, setStateValue } = component
   const mapElement = parentElement.querySelector(".place-location-map")
   const hint = parentElement.querySelector(".place-location-hint")
-  if (!mapElement || !hint) return
+  const input = parentElement.querySelector(".place-location-input")
+  const searchButton = parentElement.querySelector(".place-location-search-button")
+  if (!mapElement || !hint || !input || !searchButton) return
 
   const doc = parentElement.ownerDocument
   const view = doc.defaultView
   const STYLE_URL = "https://tiles.openfreemap.org/styles/positron"
   const MAPLIBRE_CSS = "https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css"
   const MAPLIBRE_JS = "https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"
+  const SEARCH_URL = "https://nominatim.openstreetmap.org/search"
 
   function loadCss() {
     return new Promise((resolve, reject) => {
@@ -138,6 +185,50 @@ export default function (component) {
     hint.textContent = "선택한 위치가 핀으로 표시됩니다. 다른 곳을 클릭해 변경할 수 있습니다."
   }
 
+  async function searchPlace(map) {
+    const query = input.value.trim()
+    if (!query) return
+    searchButton.disabled = true
+    hint.textContent = "검색 중입니다..."
+    try {
+      const params = new URLSearchParams({
+        q: query,
+        format: "jsonv2",
+        limit: "1",
+        "accept-language": "ko",
+      })
+      const response = await fetch(`${SEARCH_URL}?${params.toString()}`, {
+        headers: { Accept: "application/json" },
+      })
+      if (!response.ok) throw new Error(`search failed: ${response.status}`)
+      const results = await response.json()
+      if (!results.length) {
+        hint.textContent = "검색 결과가 없습니다. 다른 이름으로 검색해 보세요."
+        return
+      }
+      const place = results[0]
+      if (place.boundingbox) {
+        const [south, north, west, east] = place.boundingbox.map(Number)
+        map.fitBounds(
+          [[west, south], [east, north]],
+          { padding: 40, maxZoom: 10, duration: 800 },
+        )
+      } else {
+        map.flyTo({
+          center: [Number(place.lon), Number(place.lat)],
+          zoom: 9,
+          duration: 800,
+        })
+      }
+      hint.textContent = `"${place.display_name}" 위치로 이동했습니다. 지도를 클릭해 장소 위치를 찍어 주세요.`
+    } catch (error) {
+      console.error("DASOL place search failed.", error)
+      hint.textContent = "검색하지 못했습니다. 네트워크 연결을 확인해 주세요."
+    } finally {
+      searchButton.disabled = false
+    }
+  }
+
   loadMapLibre()
     .then(maplibregl => {
       let map = mapElement.__dasolMap
@@ -165,6 +256,14 @@ export default function (component) {
         observer.observe(mapElement)
         mapElement.__dasolResizeObserver = observer
         map.on("load", () => placeMarker(maplibregl, map))
+
+        searchButton.addEventListener("click", () => searchPlace(map))
+        input.addEventListener("keydown", event => {
+          if (event.key === "Enter") {
+            event.preventDefault()
+            searchPlace(map)
+          }
+        })
       }
       placeMarker(maplibregl, map)
     })
@@ -287,7 +386,7 @@ def _render_place_form(place=None):
         data={"location": {"latitude": latitude, "longitude": longitude}},
         on_location_change=lambda: None,
         width="stretch",
-        height=390,
+        height=440,
     )
     with st.form(f"{prefix}_form"):
         country = st.text_input(
