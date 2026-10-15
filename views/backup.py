@@ -4,7 +4,6 @@ from datetime import datetime
 import streamlit as st
 
 from backup_service import (
-    backup_signature,
     build_backup_zip,
     preview_backup,
     restore_from_zip,
@@ -33,25 +32,21 @@ def _is_unlocked():
     return False
 
 
-@st.cache_data(show_spinner=False, max_entries=1)
-def _cached_backup_zip(signature):
-    # signature가 바뀔 때만 실행된다. 같은 상태면 저장해 둔 zip을 그대로 쓴다.
-    return build_backup_zip()
-
-
 def _render_backup_button():
     st.markdown("**백업 받기**")
-    st.caption("버튼을 누르면 서버의 기록과 사진이 zip 파일로 PC에 바로 저장됩니다.")
-    with st.spinner("백업 파일을 준비하는 중입니다..."):
-        data = _cached_backup_zip(backup_signature())
-    st.download_button(
-        "백업 받기 (PC에 저장)",
-        data=data,
-        file_name=f"dasol_backup_{datetime.now():%Y%m%d_%H%M%S}.zip",
-        mime="application/zip",
-        type="primary",
-        key="backup_download_button",
-    )
+    st.caption("버튼을 누를 때만 서버의 기록과 사진을 압축해서 PC에 바로 저장합니다.")
+    
+    # 버튼을 누를 때만 딱 한 번 작동하므로 서버에 부하를 주지 않습니다!
+    if st.button("백업 받기 (PC에 저장)", type="primary", key="backup_action_button"):
+        with st.spinner("백업 파일을 준비하는 중입니다..."):
+            data = build_backup_zip()
+        st.download_button(
+            "📥 여기를 눌러서 다운로드 완료하기",
+            data=data,
+            file_name=f"dasol_backup_{datetime.now():%Y%m%d_%H%M%S}.zip",
+            mime="application/zip",
+            key="backup_download_button",
+        )
 
 
 def _render_restore():

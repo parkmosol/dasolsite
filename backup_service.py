@@ -32,21 +32,6 @@ def _media_files():
     return [path for path in MEDIA_DIR.rglob("*") if path.is_file()]
 
 
-def backup_signature():
-    """DB 파일과 업로드된 파일들의 변경 시각/크기를 조합하여 캐시용 서명을 만든다."""
-    signatures = []
-    db_path = Path(DB_PATH)
-    if db_path.exists():
-        signatures.append((db_path.stat().st_mtime, db_path.stat().st_size))
-    
-    if MEDIA_DIR.exists():
-        for path in sorted(MEDIA_DIR.rglob("*")):
-            if path.is_file():
-                signatures.append((path.name, path.stat().st_mtime, path.stat().st_size))
-    
-    return tuple(signatures)
-
-
 def build_backup_zip():
     """현재 서버의 DB와 사진을 zip 파일(bytes)로 만든다."""
     media_files = _media_files()
@@ -133,7 +118,6 @@ def _check_database(db_file):
         }
         if integrity != "ok" or not set(REQUIRED_TABLES).issubset(tables):
             raise ValueError("백업 안의 DB 파일이 올바르지 않습니다.")
-        # Windows에서 저장된 경로(\)를 서버에서도 읽히도록 / 로 바꾼다.
         for table in SAVED_PATH_TABLES:
             conn.execute(
                 "UPDATE {} SET saved_path = REPLACE(saved_path, '\\', '/')".format(table)
@@ -144,7 +128,7 @@ def _check_database(db_file):
 
 
 def restore_from_zip(data):
-    """백업 zip으로 DB와 사진을 되돌린다. 기존 데이터는 이름을 바꿔 남긴다."""
+    """백업 zip으로 DB와 사진을 되돌린다."""
     manifest = preview_backup(data)
     tmp = Path(tempfile.mkdtemp(prefix=".restore_", dir="."))
     try:
