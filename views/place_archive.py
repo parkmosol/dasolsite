@@ -109,6 +109,9 @@ export default function (component) {
       map.setMinZoom(1)
       map.setMaxBounds([[-85, -180], [85, 180]])
       map.options.maxBoundsViscosity = 1
+      setTimeout(() => {
+          map.invalidateSize();
+      }, 250);
       L.tileLayer(
         "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",
         {
