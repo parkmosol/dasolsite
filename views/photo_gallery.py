@@ -683,4 +683,4 @@ def render_photo_gallery():
                 if os.path.exists(photo["saved_path"]):
                     _render_clickable_preview(photo)
                 else:
-                    st.error(f"사진 파일을 찾을 수 없습니다: {photo['filename']}")
+                    pass
