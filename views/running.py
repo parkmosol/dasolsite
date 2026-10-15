@@ -7,9 +7,18 @@ TODAY = dt.date.today()
 MOODS = ["GREAT", "GOOD", "SO SO", "BAD", "TERRIBLE"]
 
 
+def format_course_filter(option):
+    if isinstance(option, str):
+        return option
+    course, distance = option
+    return f"{course} / {distance:g} km" if distance else course
+
+
 @st.dialog("러닝 기록 삭제")
 def delete_running_log_dialog(log):
-    st.write(f"{log['date']} · {log['course']} 기록을 삭제할까요?")
+    distance = parse_km(log["course"], log["distance_km"])
+    course_label = f"{log['course']} / {distance:g} km" if distance else log["course"]
+    st.write(f"{log['date']} · {course_label} 기록을 삭제할까요?")
     confirm_col, cancel_col = st.columns(2)
     with confirm_col:
         if st.button("삭제", type="primary", use_container_width=True):
@@ -27,44 +36,7 @@ def delete_running_log_dialog(log):
             st.rerun()
 
 
-@st.dialog("코스 관리")
-def course_manager_dialog(courses_list):
-    new_course_name = st.text_input("새 코스 이름 (예: 보문산 코스 (7km))")
-    if st.button("코스 추가", use_container_width=True):
-        if new_course_name.strip():
-            try:
-                conn = get_db()
-                conn.execute(
-                    "INSERT INTO courses(name) VALUES (?)",
-                    (new_course_name.strip(),),
-                )
-                conn.commit()
-                conn.close()
-                st.success("코스가 추가되었습니다.")
-                st.rerun()
-            except Exception:
-                st.error("이미 존재하는 코스이거나 형식이 잘못되었습니다.")
-
-    if courses_list:
-        st.markdown(
-            "<hr style='margin: 12px 0px; border:0.5px solid #E6E2DD;'>",
-            unsafe_allow_html=True,
-        )
-        del_course = st.selectbox("삭제할 코스 선택", courses_list)
-        if st.button("선택 코스 삭제", use_container_width=True):
-            conn = get_db()
-            conn.execute("DELETE FROM courses WHERE name = ?", (del_course,))
-            conn.commit()
-            conn.close()
-            st.success("코스가 삭제되었습니다.")
-            st.rerun()
-
-
-def render_running_log_editor(log, courses_list):
-    course_options = list(courses_list)
-    if log["course"] not in course_options:
-        course_options.insert(0, log["course"])
-
+def render_running_log_editor(log):
     total_minutes, seconds = divmod(log["time_sec"], 60)
     hours, minutes = divmod(total_minutes, 60)
     time_value = (
@@ -80,12 +52,23 @@ def render_running_log_editor(log, courses_list):
             dt.date.fromisoformat(log["date"]),
             key=f"edit_run_date_{log['id']}",
         )
-        edit_course = st.selectbox(
-            "코스",
-            course_options,
-            index=course_options.index(log["course"]),
-            key=f"edit_run_course_{log['id']}",
-        )
+        course_col, distance_col = st.columns([3, 1])
+        with course_col:
+            edit_course = st.text_input(
+                "코스명",
+                log["course"],
+                key=f"edit_run_course_{log['id']}",
+            )
+        with distance_col:
+            saved_distance = parse_km(log["course"], log["distance_km"])
+            edit_distance = st.number_input(
+                "거리 (km)",
+                min_value=0.01,
+                max_value=999.99,
+                value=max(saved_distance, 0.01),
+                step=0.01,
+                key=f"edit_run_distance_{log['id']}",
+            )
         edit_mood = st.selectbox(
             "기분",
             MOODS,
@@ -110,20 +93,23 @@ def render_running_log_editor(log, courses_list):
         edit_seconds, _ = parse_time_str(edit_time)
         if edit_seconds is None:
             st.error("시간 형식이 올바르지 않습니다. (예: 00:44:39 또는 4439)")
+        elif not edit_course.strip():
+            st.error("코스명을 입력해 주세요.")
         else:
             conn = get_db()
             conn.execute(
                 """
-                UPDATE running_logs
-                SET date = ?, mood = ?, course = ?, time_sec = ?, pace = ?, memo = ?
+                UPDATE running_logs SET date = ?, mood = ?, course = ?,
+                    distance_km = ?, time_sec = ?, pace = ?, memo = ?
                 WHERE id = ?
                 """,
                 (
                     edit_date.isoformat(),
                     edit_mood,
-                    edit_course,
+                    edit_course.strip(),
+                    edit_distance,
                     edit_seconds,
-                    calc_pace(edit_course, edit_seconds),
+                    calc_pace(edit_course, edit_seconds, edit_distance),
                     edit_memo,
                     log["id"],
                 ),
@@ -141,7 +127,7 @@ def render_running_log_editor(log, courses_list):
 
 def render_running_page():
     st.markdown(
-        "<h1 style='font-weight: 800; font-size: 26px; margin-top: 0;'>러닝 일기</h1>",
+        "<h1 style='font-weight: 800; font-size: 26px; margin-top: 0;'>RUNNING DIARY</h1>",
         unsafe_allow_html=True,
     )
     weekday_str = ["월", "화", "수", "목", "금", "토", "일"][TODAY.weekday()]
@@ -151,8 +137,6 @@ def render_running_page():
     )
 
     conn = get_db()
-    courses_row = conn.execute("SELECT * FROM courses").fetchall()
-    courses_list = [r["name"] for r in courses_row]
     logs = conn.execute(
         "SELECT * FROM running_logs ORDER BY date DESC"
     ).fetchall()
@@ -161,8 +145,8 @@ def render_running_page():
     prefix = TODAY.strftime("%Y-%m")
 
     month_logs = [it for it in logs if it["date"].startswith(prefix)]
-    month_km = sum(parse_km(it["course"]) for it in month_logs)
-    total_km = sum(parse_km(it["course"]) for it in logs)
+    month_km = sum(parse_km(it["course"], it["distance_km"]) for it in month_logs)
+    total_km = sum(parse_km(it["course"], it["distance_km"]) for it in logs)
 
     c1, c2, c3, c4 = st.columns(4)
     with c1:
@@ -179,21 +163,6 @@ def render_running_page():
     st.markdown(
         """
         <style>
-        .st-key-course_gear button {
-            width: 44px !important;
-            min-width: 44px !important;
-            height: 44px !important;
-            padding: 0 !important;
-            font-size: 24px !important;
-            background: transparent !important;
-            color: #2C2A29 !important;
-            border: none !important;
-            box-shadow: none !important;
-        }
-        .st-key-course_gear button:hover {
-            background: transparent !important;
-            color: var(--dasol-accent) !important;
-        }
         div[class*="st-key-run_cell_"] button {
             width: 100% !important;
             background: transparent !important;
@@ -256,18 +225,21 @@ def render_running_page():
     if mood_rules:
         st.markdown(f"<style>{mood_rules}</style>", unsafe_allow_html=True)
 
-    t_col1, t_col2, t_col3, t_col4 = st.columns(
-        [3, 0.5, 1.5, 0.01], vertical_alignment="center", gap="small"
+    course_options = sorted(
+        {
+            (it["course"], parse_km(it["course"], it["distance_km"]))
+            for it in logs
+        }
     )
-    with t_col1:
-        filter_course = st.selectbox(
-            "코스 필터", ["전체 코스"] + courses_list, label_visibility="collapsed"
-        )
-    with t_col2:
-        with st.container(key="course_gear"):
-            if st.button("⚙", key="btn_course_gear", help="코스 관리"):
-                course_manager_dialog(courses_list)
-    with t_col3:
+    filter_options = ["전체 코스"] + course_options
+    filter_course = st.selectbox(
+        "코스 필터",
+        filter_options,
+        format_func=format_course_filter,
+        label_visibility="collapsed",
+    )
+    add_col, _ = st.columns([1.5, 5])
+    with add_col:
         if st.button("+ 기록 추가", use_container_width=True):
             st.session_state.show_add_modal = True
 
@@ -275,11 +247,17 @@ def render_running_page():
         with st.form("run_add_form"):
             st.markdown("### 새로운 러닝 기록")
             r_date = st.date_input("날짜", TODAY)
-            r_course = (
-                st.selectbox("코스 선택", courses_list)
-                if courses_list
-                else st.text_input("코스 입력")
-            )
+            course_col, distance_col = st.columns([3, 1])
+            with course_col:
+                r_course = st.text_input("코스명", placeholder="예: 판암파출소")
+            with distance_col:
+                r_distance = st.number_input(
+                    "거리 (km)",
+                    min_value=0.01,
+                    max_value=999.99,
+                    value=5.0,
+                    step=0.01,
+                )
             r_mood = st.selectbox(
                 "기분", ["GREAT", "GOOD", "SO SO", "BAD", "TERRIBLE"]
             )
@@ -302,18 +280,22 @@ def render_running_page():
                     st.error(
                         "시간 형식이 올바르지 않습니다. (예: 00:44:39 또는 4439)"
                     )
+                elif not r_course.strip():
+                    st.error("코스명을 입력해 주세요.")
                 else:
-                    pace = calc_pace(r_course, sec)
+                    pace = calc_pace(r_course, sec, r_distance)
                     conn = get_db()
                     conn.execute(
                         """
-                        INSERT INTO running_logs(date, mood, course, time_sec, pace, memo)
-                        VALUES (?, ?, ?, ?, ?, ?)
+                        INSERT INTO running_logs(
+                            date, mood, course, distance_km, time_sec, pace, memo
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?)
                         """,
                         (
                             r_date.isoformat(),
                             r_mood,
-                            r_course,
+                            r_course.strip(),
+                            r_distance,
                             sec,
                             pace,
                             r_memo,
@@ -331,7 +313,12 @@ def render_running_page():
     filtered_logs = [
         it
         for it in logs
-        if filter_course == "전체 코스" or it["course"] == filter_course
+        if filter_course == "전체 코스"
+        or (
+            it["course"],
+            parse_km(it["course"], it["distance_km"]),
+        )
+        == filter_course
     ]
     filtered_logs.sort(key=lambda x: x["date"], reverse=True)
 
@@ -359,7 +346,12 @@ def render_running_page():
             columns = st.columns([1.1, 2.2, 0.85, 1.05, 1.2, 1.8], gap="small")
             values = [
                 ("date", it["date"]),
-                ("course", it["course"]),
+                (
+                    "course",
+                    f"{it['course']} / {parse_km(it['course'], it['distance_km']):g} km"
+                    if parse_km(it["course"], it["distance_km"])
+                    else it["course"],
+                ),
                 ("mood", it["mood"]),
                 ("time", t_str),
                 ("pace", it["pace"]),
@@ -392,7 +384,7 @@ def render_running_page():
                         st.session_state.delete_running_id = it["id"]
                         st.rerun()
                 if st.session_state.get("edit_running_id") == it["id"]:
-                    render_running_log_editor(it, courses_list)
+                    render_running_log_editor(it)
     else:
         st.info("등록된 러닝 기록이 없습니다.")
 

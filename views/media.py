@@ -45,7 +45,7 @@ def render_media_page():
     )
 
     st.markdown(
-        "<h1 style='font-weight: 800; font-size: 26px; margin-top: 0;'>미디어 보관함</h1>",
+        "<h1 style='font-weight: 800; font-size: 26px; margin-top: 0;'>MEDIA VAULT</h1>",
         unsafe_allow_html=True,
     )
     st.markdown(
@@ -159,7 +159,11 @@ def render_media_page():
                     exists = os.path.exists(item["saved_path"])
                     mime = get_mime(item["filename"])
 
-                    with st.container(border=True):
+                    with st.container(
+                        height=112,
+                        border=True,
+                        key=f"media_file_{item['id']}",
+                    ):
                         preview_col, info_col, download_col, delete_col = st.columns(
                             [0.8, 2.4, 1.4, 1.4],
                             vertical_alignment="center",

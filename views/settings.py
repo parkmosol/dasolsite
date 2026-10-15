@@ -69,7 +69,7 @@ DAILY_NOTES = [
 
 def render_settings():
     st.markdown(
-        "<h1 style='font-weight:800;font-size:26px;margin-top:0;'>설정</h1>",
+        "<h1 style='font-weight:800;font-size:26px;margin-top:0;'>SETTING</h1>",
         unsafe_allow_html=True,
     )
     st.markdown(

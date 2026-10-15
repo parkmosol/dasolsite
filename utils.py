@@ -33,17 +33,17 @@ def parse_time_str(s):
     return total, hms
 
 
-def calc_pace(course_name, sec):
-    m = re.search(r"(\d+(?:\.\d+)?)\s*km", course_name, re.IGNORECASE)
-    if m:
-        km = float(m.group(1))
-        if km > 0:
-            p = sec / km
-            return f"{int(p // 60)}'{int(p % 60):02d}\"/km"
+def calc_pace(course_name, sec, distance_km=None):
+    km = parse_km(course_name, distance_km)
+    if km > 0:
+        p = sec / km
+        return f"{int(p // 60)}'{int(p % 60):02d}\"/km"
     return "-"
 
 
-def parse_km(course_name):
+def parse_km(course_name, distance_km=None):
+    if distance_km is not None and distance_km > 0:
+        return float(distance_km)
     m = re.search(r"(\d+(?:\.\d+)?)\s*km", course_name, re.IGNORECASE)
     return float(m.group(1)) if m else 0.0
 
