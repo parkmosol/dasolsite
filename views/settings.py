@@ -1,4 +1,5 @@
 import streamlit as st
+from views.backup import render_backup_section
 
 THEMES = {
     "웜 아이보리": {
@@ -135,3 +136,6 @@ def render_settings():
     if st.button("다른 한마디 보기", key="new_daily_note"):
         st.session_state.daily_note_index = (quote_index + 1) % len(DAILY_NOTES)
         st.rerun()
+
+    # 👉 백업 및 복구 영역 연결
+    render_backup_section()
