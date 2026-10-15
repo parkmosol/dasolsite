@@ -111,6 +111,9 @@ export default function (component) {
   const MAPLIBRE_JS = "https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"
   const SEARCH_URL = "https://nominatim.openstreetmap.org/search"
   const REVERSE_URL = "https://nominatim.openstreetmap.org/reverse"
+  const STATUS_COLORS = { WANT: "#B77B43", VISITED: "#4E775C" }
+  const HINT_PICKED = "선택한 위치가 핀으로 표시됩니다. 다른 곳을 클릭해 변경할 수 있습니다."
+  const HINT_EMPTY = "지도를 클릭해 장소 위치를 선택하세요."
 
   function loadCss() {
     return new Promise((resolve, reject) => {
@@ -163,25 +166,43 @@ export default function (component) {
     )
   }
 
-  function createMarker(maplibregl, map, lngLat) {
-    if (!mapElement.__dasolMarker) {
-      const element = doc.createElement("div")
-      element.style.cssText =
-        "width:12px;height:12px;border-radius:50%;background:#B77B43;" +
-        "border:1.5px solid #ffffff;box-shadow:0 0 0 1px rgba(0,0,0,0.15);" +
-        "pointer-events:none;"
-      mapElement.__dasolMarker = new maplibregl.Marker({
-        element,
-        anchor: "center",
-      })
-    }
-    mapElement.__dasolMarker.setLngLat(lngLat).addTo(map)
+  function pinColor() {
+    return STATUS_COLORS[data.status] || STATUS_COLORS.WANT
   }
 
-  function setPicked(maplibregl, map, latitude, longitude) {
-    mapElement.__dasolPicked = { latitude, longitude }
-    createMarker(maplibregl, map, [longitude, latitude])
-    hint.textContent = "선택한 위치가 핀으로 표시됩니다. 다른 곳을 클릭해 변경할 수 있습니다."
+  function removePin() {
+    if (mapElement.__dasolMarker) {
+      mapElement.__dasolMarker.remove()
+      mapElement.__dasolMarker = null
+    }
+  }
+
+  function drawPin(maplibregl, map, latitude, longitude) {
+    removePin()
+    const color = pinColor()
+    const element = doc.createElement("div")
+    element.style.cssText =
+      "width:18px;height:18px;border-radius:50%;" +
+      `background:${color};` +
+      "border:3px solid #ffffff;" +
+      `box-shadow:0 0 0 3px ${color}55, 0 2px 6px rgba(0,0,0,0.35);` +
+      "pointer-events:none;"
+    mapElement.__dasolMarker = new maplibregl.Marker({
+      element,
+      anchor: "center",
+    })
+      .setLngLat([longitude, latitude])
+      .addTo(map)
+  }
+
+  function syncPin(maplibregl, map) {
+    if (isValidLocation(data.location)) {
+      drawPin(maplibregl, map, data.location.latitude, data.location.longitude)
+      hint.textContent = HINT_PICKED
+    } else {
+      removePin()
+      hint.textContent = HINT_EMPTY
+    }
   }
 
   async function reverseGeocode(latitude, longitude) {
@@ -263,71 +284,64 @@ export default function (component) {
   loadMapLibre()
     .then(maplibregl => {
       let map = mapElement.__dasolMap
-      if (map) {
-        if (map.loaded() && mapElement.__dasolPicked) {
-          const { latitude, longitude } = mapElement.__dasolPicked
-          createMarker(maplibregl, map, [longitude, latitude])
-        }
-        return
+
+      if (!map) {
+        const initial = isValidLocation(data.location) ? data.location : null
+        map = new maplibregl.Map({
+          container: mapElement,
+          style: STYLE_URL,
+          center: initial
+            ? [initial.longitude, initial.latitude]
+            : [20, 10],
+          zoom: initial ? 4 : 1.2,
+          minZoom: 0.8,
+          renderWorldCopies: false,
+        })
+        mapElement.__dasolMap = map
+
+        map.on("load", () => {
+          map.resize()
+          syncPin(maplibregl, map)
+        })
+
+        map.on("click", async event => {
+          const latitude = Number(event.lngLat.lat.toFixed(5))
+          const longitude = Number(event.lngLat.lng.toFixed(5))
+          drawPin(maplibregl, map, latitude, longitude)
+          hint.textContent = HINT_PICKED
+          setStateValue("location", { latitude, longitude })
+
+          const token = (mapElement.__dasolGeoToken || 0) + 1
+          mapElement.__dasolGeoToken = token
+          const names = await reverseGeocode(latitude, longitude)
+          if (mapElement.__dasolGeoToken !== token) return
+          if (names) {
+            setStateValue("location", {
+              latitude,
+              longitude,
+              country: names.country,
+              city: names.city,
+            })
+          }
+        })
+
+        const observer = new view.ResizeObserver(() => {
+          view.requestAnimationFrame(() => map.resize())
+        })
+        observer.observe(mapElement)
+        mapElement.__dasolResizeObserver = observer
+
+        searchButton.addEventListener("click", () => searchPlace(map))
+        input.addEventListener("keydown", event => {
+          if (event.key === "Enter") {
+            event.preventDefault()
+            searchPlace(map)
+          }
+        })
+      } else if (map.loaded()) {
+        // 값(위치, 여행 구분)이 바뀌어 다시 렌더링될 때마다 핀을 현재 값에 맞춘다.
+        syncPin(maplibregl, map)
       }
-
-      const initial = isValidLocation(data.location) ? data.location : null
-      map = new maplibregl.Map({
-        container: mapElement,
-        style: STYLE_URL,
-        center: initial
-          ? [initial.longitude, initial.latitude]
-          : [20, 10],
-        zoom: initial ? 4 : 1.2,
-        minZoom: 0.8,
-        renderWorldCopies: false,
-      })
-      mapElement.__dasolMap = map
-
-      map.on("load", () => {
-        map.resize()
-        if (initial) {
-          setPicked(maplibregl, map, initial.latitude, initial.longitude)
-        } else {
-          hint.textContent = "지도를 클릭해 장소 위치를 선택하세요."
-        }
-      })
-
-      map.on("click", async event => {
-        const latitude = Number(event.lngLat.lat.toFixed(5))
-        const longitude = Number(event.lngLat.lng.toFixed(5))
-        setPicked(maplibregl, map, latitude, longitude)
-        setStateValue("location", { latitude, longitude })
-
-        const token = (mapElement.__dasolGeoToken || 0) + 1
-        mapElement.__dasolGeoToken = token
-        hint.textContent = "위치 정보를 확인하는 중입니다..."
-        const names = await reverseGeocode(latitude, longitude)
-        if (mapElement.__dasolGeoToken !== token) return
-        hint.textContent = "선택한 위치가 핀으로 표시됩니다. 다른 곳을 클릭해 변경할 수 있습니다."
-        if (names) {
-          setStateValue("location", {
-            latitude,
-            longitude,
-            country: names.country,
-            city: names.city,
-          })
-        }
-      })
-
-      const observer = new view.ResizeObserver(() => {
-        view.requestAnimationFrame(() => map.resize())
-      })
-      observer.observe(mapElement)
-      mapElement.__dasolResizeObserver = observer
-
-      searchButton.addEventListener("click", () => searchPlace(map))
-      input.addEventListener("keydown", event => {
-        if (event.key === "Enter") {
-          event.preventDefault()
-          searchPlace(map)
-        }
-      })
     })
     .catch(error => {
       console.error("DASOL place location map failed to initialize.", error)
@@ -464,7 +478,10 @@ def _render_place_form(place=None):
     st.markdown("**지도에서 위치 선택**")
     _LOCATION_PICKER(
         key=location_state_key,
-        data={"location": {"latitude": latitude, "longitude": longitude}},
+        data={
+            "location": {"latitude": latitude, "longitude": longitude},
+            "status": status,
+        },
         on_location_change=lambda: None,
         width="stretch",
         height=440,
