@@ -1,5 +1,4 @@
 import streamlit as st
-from views.backup import render_backup_section
 
 THEMES = {
     "웜 아이보리": {
