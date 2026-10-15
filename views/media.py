@@ -1,5 +1,7 @@
 import datetime as dt
 import os
+import sqlite3
+import uuid
 import streamlit as st
 from database import get_db
 from utils import get_mime
@@ -74,53 +76,84 @@ def render_media_page():
             upload_key = f"{sub_folder}_{media_type}"
             generation_key = f"media_upload_generation_{upload_key}"
             generation = st.session_state.get(generation_key, 0)
-            uploaded_file = st.file_uploader(
+            uploaded_files = st.file_uploader(
                 f"{box_title} {selected_type} 파일 선택",
                 type=allowed_extensions,
+                accept_multiple_files=True,
                 key=f"upl_{upload_key}_{generation}",
             )
 
-            if uploaded_file is not None:
-                orig_name = uploaded_file.name
-                base_name, ext = os.path.splitext(orig_name)
+            if uploaded_files:
+                final_names = [os.path.basename(file.name) for file in uploaded_files]
+                if len(uploaded_files) == 1:
+                    base_name, ext = os.path.splitext(final_names[0])
+                    new_name = st.text_input(
+                        "저장할 파일명",
+                        value=base_name,
+                        key=f"name_{upload_key}_{generation}",
+                    )
+                    final_names[0] = (
+                        os.path.basename(new_name.strip() or base_name) + ext
+                    )
+                else:
+                    st.caption(
+                        f"선택한 파일 {len(uploaded_files)}개를 원래 이름으로 보관합니다."
+                    )
 
-                new_name = st.text_input(
-                    "저장할 파일명",
-                    value=base_name,
-                    key=f"name_{upload_key}_{generation}",
-                )
                 if st.button(
-                    "보관하기",
+                    (
+                        "보관하기"
+                        if len(uploaded_files) == 1
+                        else f"{len(uploaded_files)}개 파일 보관하기"
+                    ),
                     key=f"save_{upload_key}_{generation}",
                     type="primary",
                     use_container_width=True,
                 ):
-                    final_name = (new_name.strip() or base_name) + ext
-                    save_path = os.path.join(
-                        UPLOAD_DIR,
-                        sub_folder,
-                        f"{dt.datetime.now().timestamp()}_{final_name}",
-                    )
-                    with open(save_path, "wb") as f:
-                        f.write(uploaded_file.getbuffer())
+                    saved_paths = []
+                    records = []
+                    uploaded_at = dt.datetime.now().isoformat()
+                    try:
+                        for uploaded_file, final_name in zip(
+                            uploaded_files, final_names
+                        ):
+                            save_path = os.path.join(
+                                UPLOAD_DIR,
+                                sub_folder,
+                                f"{dt.datetime.now().timestamp()}_{uuid.uuid4().hex[:8]}_{final_name}",
+                            )
+                            saved_paths.append(save_path)
+                            with open(save_path, "wb") as file_data:
+                                file_data.write(uploaded_file.getbuffer())
+                            records.append(
+                                (
+                                    f"{sub_folder}_{media_type}",
+                                    final_name,
+                                    save_path,
+                                    uploaded_at,
+                                )
+                            )
 
-                    conn = get_db()
-                    conn.execute(
-                        """
-                        INSERT INTO media_logs(category, filename, saved_path, uploaded_at)
-                        VALUES (?, ?, ?, ?)
-                        """,
-                        (
-                            f"{sub_folder}_{media_type}",
-                            final_name,
-                            save_path,
-                            dt.datetime.now().isoformat(),
-                        ),
-                    )
-                    conn.commit()
-                    conn.close()
+                        conn = get_db()
+                        try:
+                            conn.executemany(
+                                """
+                                INSERT INTO media_logs(category, filename, saved_path, uploaded_at)
+                                VALUES (?, ?, ?, ?)
+                                """,
+                                records,
+                            )
+                            conn.commit()
+                        finally:
+                            conn.close()
+                    except (OSError, sqlite3.Error):
+                        for saved_path in saved_paths:
+                            if os.path.exists(saved_path):
+                                os.remove(saved_path)
+                        raise
+
                     st.session_state[generation_key] = generation + 1
-                    st.success("보관되었습니다.")
+                    st.success(f"{len(uploaded_files)}개 파일을 보관했습니다.")
                     st.rerun()
 
             st.markdown(

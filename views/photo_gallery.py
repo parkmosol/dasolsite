@@ -256,78 +256,89 @@ def _render_photo_view(photos, selected_index):
         )
 
     direction = st.session_state.get("photo_direction", "next")
-    nav_previous, viewer, nav_next = st.columns(
-        [1, 14, 1],
-        gap="small",
-        vertical_alignment="center",
-    )
-    with nav_previous:
-        if st.button(
-            "‹",
-            key="photo_previous",
-            disabled=selected_index == 0,
-            width="stretch",
-            help="이전 사진",
-        ):
-            st.session_state.photo_direction = "previous"
-            st.session_state.selected_photo_id = photos[selected_index - 1]["id"]
-            st.query_params["photo_id"] = str(photos[selected_index - 1]["id"])
-            st.rerun()
-    with viewer:
-        with st.container(key=f"photo_view_slide_{direction}"):
-            if os.path.exists(photo["saved_path"]):
-                st.image(
-                    photo["saved_path"],
-                    alt=photo["title"],
+    with st.container(key="photo_view_layout"):
+        image_column, details_column = st.columns(
+            [1.55, 1],
+            gap="large",
+            vertical_alignment="center",
+        )
+        with image_column:
+            nav_previous, viewer, nav_next = st.columns(
+                [0.08, 1, 0.08],
+                gap="small",
+                vertical_alignment="center",
+            )
+            with nav_previous:
+                if st.button(
+                    "‹",
+                    key="photo_previous",
+                    disabled=selected_index == 0,
                     width="stretch",
-                )
-            else:
-                st.error("사진 파일을 찾을 수 없습니다.")
-    with nav_next:
-        if st.button(
-            "›",
-            key="photo_next",
-            disabled=selected_index == len(photos) - 1,
-            width="stretch",
-            help="다음 사진",
-        ):
-            st.session_state.photo_direction = "next"
-            st.session_state.selected_photo_id = photos[selected_index + 1]["id"]
-            st.query_params["photo_id"] = str(photos[selected_index + 1]["id"])
-            st.rerun()
+                    help="이전 사진",
+                ):
+                    st.session_state.photo_direction = "previous"
+                    st.session_state.selected_photo_id = photos[selected_index - 1]["id"]
+                    st.query_params["photo_id"] = str(photos[selected_index - 1]["id"])
+                    st.rerun()
+            with viewer:
+                with st.container(key=f"photo_view_slide_{direction}"):
+                    if os.path.exists(photo["saved_path"]):
+                        st.image(
+                            photo["saved_path"],
+                            alt=photo["title"],
+                            width="stretch",
+                        )
+                    else:
+                        st.error("사진 파일을 찾을 수 없습니다.")
+            with nav_next:
+                if st.button(
+                    "›",
+                    key="photo_next",
+                    disabled=selected_index == len(photos) - 1,
+                    width="stretch",
+                    help="다음 사진",
+                ):
+                    st.session_state.photo_direction = "next"
+                    st.session_state.selected_photo_id = photos[selected_index + 1]["id"]
+                    st.query_params["photo_id"] = str(photos[selected_index + 1]["id"])
+                    st.rerun()
 
-    with st.container(key="photo_view_caption"):
-        st.markdown(
-            f"<h2 class='photo-view-title'>{html.escape(photo['title'])}</h2>",
-            unsafe_allow_html=True,
-        )
-        caption = "  ·  ".join(
-            value for value in (photo["shot_date"], photo["location"] or "") if value
-        )
-        if caption:
-            st.markdown(
-                f"<p class='photo-view-meta'>{html.escape(caption)}</p>",
-                unsafe_allow_html=True,
-            )
-        if photo["description"]:
-            st.markdown(
-                f"<p class='photo-view-description'>"
-                f"{html.escape(photo['description']).replace(chr(10), '<br>')}"
-                "</p>",
-                unsafe_allow_html=True,
-            )
-        exposure = [
-            f"ISO {photo['iso']}" if photo["iso"] else None,
-            photo["shutter_speed"] or None,
-            photo["aperture"] or None,
-        ]
-        exposure = [value for value in exposure if value]
-        if exposure:
-            st.markdown(
-                f"<p class='photo-view-exposure'>{html.escape(' · '.join(exposure))}</p>",
-                unsafe_allow_html=True,
-            )
-    _render_photo_editor(photo)
+        with details_column:
+            with st.container(key="photo_view_caption"):
+                st.markdown(
+                    f"<h2 class='photo-view-title'>{html.escape(photo['title'])}</h2>",
+                    unsafe_allow_html=True,
+                )
+                caption = "  ·  ".join(
+                    value
+                    for value in (photo["shot_date"], photo["location"] or "")
+                    if value
+                )
+                if caption:
+                    st.markdown(
+                        f"<p class='photo-view-meta'>{html.escape(caption)}</p>",
+                        unsafe_allow_html=True,
+                    )
+                if photo["description"]:
+                    st.markdown(
+                        f"<p class='photo-view-description'>"
+                        f"{html.escape(photo['description']).replace(chr(10), '<br>')}"
+                        "</p>",
+                        unsafe_allow_html=True,
+                    )
+                exposure = [
+                    f"ISO {photo['iso']}" if photo["iso"] else None,
+                    photo["shutter_speed"] or None,
+                    photo["aperture"] or None,
+                ]
+                exposure = [value for value in exposure if value]
+                if exposure:
+                    st.markdown(
+                        f"<p class='photo-view-exposure'>"
+                        f"{html.escape(' · '.join(exposure))}</p>",
+                        unsafe_allow_html=True,
+                    )
+                _render_photo_editor(photo)
 
 
 def render_photo_gallery():
@@ -401,28 +412,28 @@ def render_photo_gallery():
             display: flex;
             justify-content: center;
             align-items: center;
-            min-height: 45vh;
         }
         .st-key-photo_view_slide_next [data-testid="stImage"] img,
         .st-key-photo_view_slide_previous [data-testid="stImage"] img {
             width: auto !important;
             max-width: 100% !important;
             height: auto !important;
-            max-height: 68vh !important;
+            max-height: calc(100vh - 190px) !important;
             object-fit: contain !important;
             margin: 0 auto !important;
         }
         .st-key-photo_view_caption {
-            max-width: 880px;
-            margin: 16px auto 0;
-            padding: 0 4px;
-            border-top: 1px solid var(--dasol-border);
+            box-sizing: border-box;
+            width: 100%;
+            margin: 0;
+            padding: 8px 0 8px 28px;
+            border-left: 1px solid var(--dasol-border);
         }
         .photo-view-title {
-            font-size: 24px;
+            font-size: 27px;
             font-weight: 600;
             letter-spacing: 0.03em;
-            margin: 14px 0 4px;
+            margin: 0 0 8px;
             color: var(--dasol-text);
         }
         .photo-view-meta {
@@ -431,26 +442,31 @@ def render_photo_gallery():
             margin: 0 0 10px;
         }
         .photo-view-description {
-            max-width: 680px;
             color: var(--dasol-text);
             font-size: 14px;
             line-height: 1.8;
-            margin: 12px 0;
+            margin: 18px 0;
             white-space: normal;
+            overflow-wrap: anywhere;
         }
         .photo-view-exposure {
             font-size: 11px;
             letter-spacing: 0.06em;
-            margin: 14px 0;
+            margin: 18px 0 0;
         }
-        @media (max-width: 640px) {
-            .st-key-photo_view_slide_next [data-testid="stImage"],
-            .st-key-photo_view_slide_previous [data-testid="stImage"] {
-                min-height: 40vh;
+        @media (max-width: 768px) {
+            .st-key-photo_view_layout [data-testid="stHorizontalBlock"] {
+                flex-wrap: wrap !important;
             }
             .st-key-photo_view_slide_next [data-testid="stImage"] img,
             .st-key-photo_view_slide_previous [data-testid="stImage"] img {
-                max-height: 58vh !important;
+                max-height: 62vh !important;
+            }
+            .st-key-photo_view_caption {
+                margin-top: 20px;
+                padding: 18px 0 0;
+                border-left: 0;
+                border-top: 1px solid var(--dasol-border);
             }
         }
         </style>
@@ -660,7 +676,7 @@ def render_photo_gallery():
             del st.query_params["photo_id"]
         st.warning("선택한 사진을 찾을 수 없습니다.")
 
-    columns = st.columns(min(3, len(photos)), gap="medium")
+    columns = st.columns(3, gap="medium")
     for index, photo in enumerate(photos):
         with columns[index % len(columns)]:
             with st.container(key=f"gallery_card_{photo['id']}"):

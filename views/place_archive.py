@@ -3,7 +3,6 @@ import html
 import os
 import sqlite3
 import uuid
-from urllib.parse import urlencode
 
 import pydeck as pdk
 import streamlit as st
@@ -30,9 +29,16 @@ _LOCATION_PICKER = st.components.v2.component(
         </div>
     """,
     css="""
+        .place-location-picker {
+            box-sizing: border-box;
+            width: 100%;
+            padding: 4px 0;
+        }
         .place-location-map {
+            box-sizing: border-box;
             width: 100%;
             height: 320px;
+            min-height: 320px;
             border: 1px solid var(--st-color-border);
             border-radius: 8px;
             overflow: hidden;
@@ -78,8 +84,11 @@ export default function (component) {
         scriptReady,
       ]).then(([, leaflet]) => leaflet)
     }
-    view.__dasolLeafletPromise.then(initialize).catch(() => {
-      hint.textContent = "지도를 불러오지 못했습니다. 네트워크 연결을 확인해 주세요."
+    view.__dasolLeafletPromise.then(initialize).catch(error => {
+      console.error("DASOL place location map failed to initialize.", error)
+      if (!mapElement.__dasolMap) {
+        hint.textContent = "지도를 불러오지 못했습니다. 네트워크 연결을 확인해 주세요."
+      }
     })
   } else {
     initialize(view.L)
@@ -138,8 +147,17 @@ export default function (component) {
         }).addTo(map)
       }
       hint.textContent = "선택한 위치가 핀으로 표시됩니다. 다른 곳을 클릭해 변경할 수 있습니다."
+    } else {
+      hint.textContent = "지도를 클릭해 장소 위치를 선택하세요."
     }
-    view.setTimeout(() => map.invalidateSize(), 0)
+    if (!mapElement.__dasolResizeObserver) {
+      mapElement.__dasolResizeObserver = new view.ResizeObserver(() => {
+        view.requestAnimationFrame(() => map.invalidateSize({ pan: false }))
+      })
+      mapElement.__dasolResizeObserver.observe(mapElement.parentElement)
+      mapElement.__dasolResizeObserver.observe(mapElement)
+    }
+    view.requestAnimationFrame(() => map.invalidateSize({ pan: false }))
   }
 }
 """,
@@ -254,7 +272,7 @@ def _render_place_form(place=None):
         data={"location": {"latitude": latitude, "longitude": longitude}},
         on_location_change=lambda: None,
         width="stretch",
-        height=360,
+        height=390,
     )
     with st.form(f"{prefix}_form"):
         country = st.text_input(
