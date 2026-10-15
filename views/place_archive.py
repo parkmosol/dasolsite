@@ -1,8 +1,10 @@
 import datetime as dt
 import html
+import json
 import os
 import sqlite3
 import uuid
+from functools import lru_cache
 
 import pydeck as pdk
 import streamlit as st
@@ -11,6 +13,9 @@ from PIL import Image, UnidentifiedImageError
 from database import get_db
 
 PLACE_PHOTO_DIR = os.path.join("uploaded_media", "place_archive")
+WORLD_GEOJSON_PATH = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "..", "assets", "world_countries.geojson"
+)
 PHOTO_EXTENSIONS = {"jpg", "jpeg", "png", "webp"}
 os.makedirs(PLACE_PHOTO_DIR, exist_ok=True)
 
@@ -19,6 +24,21 @@ STATUS_COLORS = {
     "WANT": [183, 123, 67, 210],
     "VISITED": [78, 119, 92, 220],
 }
+
+
+@lru_cache(maxsize=1)
+def _load_world_geojson():
+    try:
+        with open(WORLD_GEOJSON_PATH, encoding="utf-8") as geojson_file:
+            geojson = json.load(geojson_file)
+    except (OSError, json.JSONDecodeError):
+        return None
+    features = [
+        {"type": "Feature", "properties": {}, "geometry": feature["geometry"]}
+        for feature in geojson.get("features", [])
+    ]
+    return {"type": "FeatureCollection", "features": features}
+
 
 _LOCATION_PICKER = st.components.v2.component(
     "dasol.place_location_picker",
@@ -135,6 +155,18 @@ export default function (component) {
         hasInitialLocation ? 5 : 2,
       )
       map.setMaxBounds([[-85, -180], [85, 180]])
+
+      if (data.world && data.world.features) {
+        L.geoJSON(data.world, {
+          interactive: false,
+          style: {
+            color: "#A9B8AE",
+            weight: 0.6,
+            fillColor: "#F4F1EA",
+            fillOpacity: 1,
+          },
+        }).addTo(map)
+      }
 
       mapElement.__dasolMap = map
       map.on("click", event => {
@@ -284,7 +316,10 @@ def _render_place_form(place=None):
     st.markdown("**지도에서 위치 선택**")
     _LOCATION_PICKER(
         key=location_state_key,
-        data={"location": {"latitude": latitude, "longitude": longitude}},
+        data={
+            "location": {"latitude": latitude, "longitude": longitude},
+            "world": _load_world_geojson(),
+        },
         on_location_change=lambda: None,
         width="stretch",
         height=390,
