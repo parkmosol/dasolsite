@@ -29,7 +29,7 @@ _LOCATION_PICKER = st.components.v2.component(
                 <input
                     type="text"
                     class="place-location-input"
-                    placeholder="장소 검색 (예: 삿포로, 일본)"
+                    placeholder="장소 검색 (예: 마쓰야마, 일본)"
                 />
                 <button type="button" class="place-location-search-button">검색</button>
             </div>
@@ -704,3 +704,343 @@ def _build_map(places):
                 "<b>{title}</b><br/>{city}, {country}<br/>{status_label}"
             ),
             "style": {
+                "backgroundColor": "#ffffff",
+                "color": "#2C2A29",
+                "fontFamily": "sans-serif",
+                "borderRadius": "6px",
+            },
+        },
+    )
+
+
+def _render_map(places):
+    chart = st.pydeck_chart(
+        _build_map(places),
+        key="place_archive_map",
+        on_select="rerun",
+        selection_mode="single-object",
+        height=520,
+        width="stretch",
+        alt="세계 지도에 표시한 여행 희망지와 방문 장소",
+    )
+    selected_objects = (
+        chart.get("selection", {}).get("objects", {})
+        if chart is not None
+        else {}
+    )
+    for layer_objects in selected_objects.values():
+        if layer_objects:
+            selected_id = layer_objects[0].get("id")
+            if selected_id is not None:
+                return int(selected_id)
+    return None
+
+
+def _render_place_photos(place):
+    conn = get_db()
+    try:
+        photos = conn.execute(
+            """
+            SELECT * FROM place_archive_photos
+            WHERE place_id = ? ORDER BY id
+            """,
+            (place["id"],),
+        ).fetchall()
+    finally:
+        conn.close()
+
+    if not photos:
+        st.caption("등록된 여행 사진이 없습니다.")
+        return
+    photo_columns = st.columns(min(3, len(photos)), gap="medium")
+    for index, photo in enumerate(photos):
+        with photo_columns[index % len(photo_columns)]:
+            if not os.path.exists(photo["saved_path"]):
+                st.warning(f"사진 파일을 찾을 수 없습니다: {photo['filename']}")
+                continue
+            st.image(
+                photo["saved_path"],
+                alt=f"{place['city'] or place['country']} 여행 사진",
+                width="stretch",
+            )
+            if st.button(
+                "사진 크게 보기",
+                key=f"view_place_photo_{photo['id']}",
+                width="stretch",
+            ):
+                st.session_state.selected_place_photo_id = photo["id"]
+                st.query_params["place_photo_id"] = str(photo["id"])
+                st.rerun()
+            if st.button(
+                "사진 삭제",
+                key=f"delete_place_photo_{photo['id']}",
+                width="stretch",
+            ):
+                conn = get_db()
+                try:
+                    conn.execute(
+                        "DELETE FROM place_archive_photos WHERE id = ? AND place_id = ?",
+                        (photo["id"], place["id"]),
+                    )
+                    conn.commit()
+                finally:
+                    conn.close()
+                _remove_files([photo["saved_path"]])
+                st.rerun()
+
+
+def _render_photo_view(photo):
+    if st.button(":material/arrow_back: 장소 기록으로 돌아가기", key="place_photo_back"):
+        st.session_state.pop("selected_place_photo_id", None)
+        if "place_photo_id" in st.query_params:
+            del st.query_params["place_photo_id"]
+        st.rerun()
+    st.subheader(photo["filename"])
+    if os.path.exists(photo["saved_path"]):
+        with st.container(key="place_photo_viewer"):
+            st.image(
+                photo["saved_path"],
+                alt=f"{photo['place_title']} 여행 사진",
+                width="stretch",
+            )
+    else:
+        st.error("사진 파일을 찾을 수 없습니다.")
+    place_name = ", ".join(
+        value for value in (photo["city"] or "", photo["country"]) if value
+    )
+    st.caption(f"{place_name}  ·  {photo['filename']}")
+
+
+def _render_selected_place(places):
+    selected_id = st.session_state.get("selected_place_id")
+    place = next((item for item in places if item["id"] == selected_id), None)
+    if place is None:
+        st.caption("지도 핀이나 장소 목록을 선택하면 여행 기록이 여기에 표시됩니다.")
+        return
+
+    with st.container(key=f"place_archive_selected_{place['id']}", border=True):
+        st.caption(STATUS_LABELS[place["status"]])
+        st.subheader(
+            ", ".join(
+                value for value in (place["city"] or "", place["country"]) if value
+            )
+        )
+        st.caption(f"{place['latitude']:.4f}, {place['longitude']:.4f}")
+        if place["description"]:
+            st.write(place["description"])
+        if place["status"] == "WANT":
+            st.markdown("**여행 목표와 방문하고 싶은 이유**")
+            st.write(place["travel_goal"] or "아직 기록이 없습니다.")
+        else:
+            if place["visit_date"]:
+                st.caption(f"여행 날짜 · {place['visit_date']}")
+            st.markdown("**여행의 추억**")
+            st.write(place["memory"] or "아직 기록이 없습니다.")
+            _render_place_photos(place)
+
+        edit_col, delete_col, _ = st.columns([1, 1, 4])
+        with edit_col:
+            if st.button("수정", key=f"edit_place_{place['id']}"):
+                prefix = f"edit_place_{place['id']}"
+                for suffix in ("_location_picker", "_auto_location", "_country", "_city"):
+                    st.session_state.pop(f"{prefix}{suffix}", None)
+                st.session_state.edit_place_id = place["id"]
+                st.session_state.show_new_place = False
+                st.rerun()
+        with delete_col:
+            if st.button(
+                "삭제",
+                key=f"delete_place_{place['id']}",
+                type="secondary",
+            ):
+                st.session_state.delete_place_id = place["id"]
+                st.rerun()
+
+    if st.session_state.get("edit_place_id") == place["id"]:
+        _render_place_form(place)
+
+
+def render_place_archive():
+    st.markdown(
+        """
+        <style>
+        @keyframes archiveEnter {
+            from { opacity: 0.55; transform: translateY(8px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        [class*="st-key-place_archive_selected_"] [data-testid="stVerticalBlockBorderWrapper"],
+        .st-key-place_photo_viewer [data-testid="stImage"] {
+            animation: archiveEnter 260ms ease-out both;
+        }
+        .place-archive-legend {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 18px;
+            color: var(--dasol-muted);
+            font-size: 13px;
+            margin: 8px 0 16px;
+        }
+        .place-archive-legend span {
+            display: inline-flex;
+            align-items: center;
+            gap: 7px;
+        }
+        .place-archive-dot {
+            width: 9px;
+            height: 9px;
+            border-radius: 50%;
+            display: inline-block;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+    st.markdown(
+        "<h1 style='font-weight:800;font-size:26px;margin-top:0;'>PLACE ARCHIVE</h1>",
+        unsafe_allow_html=True,
+    )
+    st.markdown(
+        "<p style='color:var(--dasol-muted);margin-top:-8px;'>"
+        "가고 싶은 곳은 목표로, 다녀온 곳은 기억으로 남겨 보세요.</p>",
+        unsafe_allow_html=True,
+    )
+
+    places = _read_places()
+    visited_count = sum(place["status"] == "VISITED" for place in places)
+    wish_count = len(places) - visited_count
+    stat_visited, stat_wish, stat_total = st.columns(3)
+    stat_visited.metric("다녀온 곳", visited_count)
+    stat_wish.metric("가고 싶은 곳", wish_count)
+    stat_total.metric("여행 기록", len(places))
+
+    st.markdown(
+        """
+        <div class="place-archive-legend">
+            <span><i class="place-archive-dot" style="background:#B77B43"></i>가고 싶은 곳</span>
+            <span><i class="place-archive-dot" style="background:#4E775C"></i>다녀온 곳</span>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    photo_id = st.session_state.get("selected_place_photo_id")
+    if photo_id is not None:
+        conn = get_db()
+        try:
+            photo = conn.execute(
+                """
+                SELECT place_archive_photos.*, place_archive.title AS place_title,
+                    place_archive.country, place_archive.city
+                FROM place_archive_photos
+                JOIN place_archive ON place_archive.id = place_archive_photos.place_id
+                WHERE place_archive_photos.id = ?
+                """,
+                (photo_id,),
+            ).fetchone()
+        finally:
+            conn.close()
+        if photo is None:
+            st.session_state.pop("selected_place_photo_id", None)
+            if "place_photo_id" in st.query_params:
+                del st.query_params["place_photo_id"]
+            st.warning("선택한 여행 사진을 찾을 수 없습니다.")
+        else:
+            _render_photo_view(photo)
+            return
+
+    if st.button(
+        "장소 등록 열기"
+        if not st.session_state.get("show_new_place", False)
+        else "등록 닫기",
+        key="toggle_new_place",
+    ):
+        for suffix in ("_location_picker", "_auto_location", "_country", "_city"):
+            st.session_state.pop(f"new_place{suffix}", None)
+        st.session_state.show_new_place = not st.session_state.get(
+            "show_new_place", False
+        )
+        st.session_state.edit_place_id = None
+        st.rerun()
+    if st.session_state.get("show_new_place", False):
+        _render_place_form()
+
+    map_col, details_col = st.columns([1.55, 1], gap="large")
+    with map_col:
+        map_selected_id = _render_map(places)
+        st.caption(
+            "지도를 드래그해 이동하고 휠로 확대·축소하세요. 핀을 누르면 장소 정보를 확인할 수 있습니다."
+        )
+    with details_col:
+        st.subheader("여행 기록")
+        if places:
+            place_options = {
+                place["id"]: (
+                    f"{'●' if place['status'] == 'VISITED' else '○'}  "
+                    + ", ".join(
+                        value
+                        for value in (place["city"] or "", place["country"])
+                        if value
+                    )
+                )
+                for place in places
+            }
+            selected_id = st.session_state.get("selected_place_id")
+            last_map_selected_id = st.session_state.get("last_map_selected_id")
+            if map_selected_id != last_map_selected_id:
+                st.session_state.last_map_selected_id = map_selected_id
+                if map_selected_id in place_options:
+                    selected_id = map_selected_id
+                    _set_selected_place(selected_id)
+            if selected_id not in place_options:
+                selected_id = None
+                if st.session_state.get("selected_place_id") is not None:
+                    _set_selected_place(None)
+            if (
+                st.session_state.get("synced_place_archive_selection")
+                != selected_id
+                or "place_archive_selection" not in st.session_state
+            ):
+                _set_selected_place(selected_id)
+            chosen_id = st.selectbox(
+                "장소 선택",
+                options=[None, *place_options],
+                index=(
+                    None
+                    if "place_archive_selection" in st.session_state
+                    else 0
+                ),
+                format_func=lambda value: (
+                    "장소를 선택하세요" if value is None else place_options[value]
+                ),
+                key="place_archive_selection",
+                label_visibility="collapsed",
+            )
+            st.session_state.selected_place_id = chosen_id
+            st.session_state.synced_place_archive_selection = chosen_id
+            if chosen_id is not None:
+                _render_selected_place(places)
+            else:
+                st.caption("지도 핀이나 목록에서 장소를 선택해 기록을 확인하세요.")
+        else:
+            st.caption("장소를 등록하면 세계 지도 위에 여행 기록이 쌓입니다.")
+
+    delete_id = st.session_state.get("delete_place_id")
+    if delete_id is not None:
+        place = next((item for item in places if item["id"] == delete_id), None)
+        if place is not None:
+            place_name = ", ".join(
+                value for value in (place["city"] or "", place["country"]) if value
+            )
+            st.warning(f"'{place_name}' 장소와 사진을 삭제할까요?")
+            confirm_col, cancel_col, _ = st.columns([1, 1, 4])
+            with confirm_col:
+                if st.button(
+                    "삭제 확인",
+                    key=f"confirm_delete_place_{delete_id}",
+                    type="primary",
+                ):
+                    _delete_place(delete_id)
+            with cancel_col:
+                if st.button("취소", key="cancel_delete_place"):
+                    st.session_state.delete_place_id = None
+                    st.rerun()
