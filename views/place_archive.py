@@ -42,6 +42,8 @@ _LOCATION_PICKER = st.components.v2.component(
             border: 1px solid var(--st-color-border);
             border-radius: 8px;
             overflow: hidden;
+            background: #e8eee9;
+            cursor: crosshair;
         }
         .place-location-hint {
             margin: 8px 0 0;
@@ -122,23 +124,17 @@ export default function (component) {
       const hasInitialLocation =
         Number.isFinite(data.location?.latitude) &&
         Number.isFinite(data.location?.longitude)
-      map = L.map(mapElement, { minZoom: 1, maxBoundsViscosity: 1.0 }).setView(
+      map = L.map(mapElement, {
+        minZoom: 1,
+        maxBoundsViscosity: 1.0,
+        attributionControl: false,
+      }).setView(
         hasInitialLocation
           ? [data.location.latitude, data.location.longitude]
           : [20, 0],
         hasInitialLocation ? 5 : 2,
       )
       map.setMaxBounds([[-85, -180], [85, 180]])
-
-         L.tileLayer(
-        "https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}",
-        {
-          attribution:
-            'Tiles &copy; <a href="https://www.esri.com/">Esri</a> &mdash; Source: Esri, HERE, Garmin, USGS, NGA, EPA, NPS',
-          maxZoom: 19,
-          noWrap: true,
-        },
-      ).addTo(map)
 
       mapElement.__dasolMap = map
       map.on("click", event => {
@@ -181,6 +177,8 @@ export default function (component) {
 }
 """,
 )
+
+
 def _set_selected_place(place_id, update_widget=True):
     st.session_state.selected_place_id = place_id
     if update_widget:
@@ -471,6 +469,7 @@ def _delete_place(place_id):
     _remove_files([photo["saved_path"] for photo in photo_rows])
     st.session_state.selected_place_id = None
     st.session_state.edit_place_id = None
+    st.session_state.delete_place_id = None
     st.success("장소 기록을 삭제했습니다.")
     st.rerun()
 
