@@ -38,6 +38,11 @@ _LOCATION_PICKER = st.components.v2.component(
         </div>
     """,
     css="""
+        html, body {
+            margin: 0;
+            padding: 0;
+            overflow: hidden;
+        }
         .place-location-picker {
             box-sizing: border-box;
             width: 100%;
@@ -80,14 +85,17 @@ _LOCATION_PICKER = st.components.v2.component(
             cursor: default;
         }
         .place-location-map {
+            position: relative;
             box-sizing: border-box;
             width: 100%;
-            height: 320px;
-            min-height: 320px;
+            height: 340px;
             border: 1px solid var(--st-color-border);
             border-radius: 8px;
             overflow: hidden;
             cursor: crosshair;
+        }
+        .place-location-map .maplibregl-canvas {
+            outline: none;
         }
         .place-location-hint {
             margin: 8px 0 0;
@@ -112,8 +120,13 @@ export default function (component) {
   const SEARCH_URL = "https://nominatim.openstreetmap.org/search"
   const REVERSE_URL = "https://nominatim.openstreetmap.org/reverse"
   const STATUS_COLORS = { WANT: "#B77B43", VISITED: "#4E775C" }
+  const PIN_SOURCE = "dasol-pick-source"
+  const PIN_LAYER = "dasol-pick-layer"
   const HINT_PICKED = "선택한 위치가 핀으로 표시됩니다. 다른 곳을 클릭해 변경할 수 있습니다."
   const HINT_EMPTY = "지도를 클릭해 장소 위치를 선택하세요."
+
+  mapElement.__dasolStatus = data.status
+  mapElement.__dasolLocation = data.location
 
   function loadCss() {
     return new Promise((resolve, reject) => {
@@ -167,42 +180,57 @@ export default function (component) {
   }
 
   function pinColor() {
-    return STATUS_COLORS[data.status] || STATUS_COLORS.WANT
+    return STATUS_COLORS[mapElement.__dasolStatus] || STATUS_COLORS.WANT
   }
 
-  function removePin() {
-    if (mapElement.__dasolMarker) {
-      mapElement.__dasolMarker.remove()
-      mapElement.__dasolMarker = null
+  // 지도 실제 크기를 여러 번 다시 맞춘다. 레이아웃이 늦게 잡혀도 좌표가 어긋나지 않게 한다.
+  function refreshSize(map) {
+    map.resize()
+    view.setTimeout(() => map.resize(), 150)
+    view.setTimeout(() => map.resize(), 600)
+  }
+
+  function applyPin(map, location) {
+    if (!map.isStyleLoaded()) {
+      map.once("idle", () => applyPin(map, location))
+      return
     }
-  }
+    const hasPin = isValidLocation(location)
+    const collection = {
+      type: "FeatureCollection",
+      features: hasPin
+        ? [
+            {
+              type: "Feature",
+              properties: {},
+              geometry: {
+                type: "Point",
+                coordinates: [location.longitude, location.latitude],
+              },
+            },
+          ]
+        : [],
+    }
 
-  function drawPin(maplibregl, map, latitude, longitude) {
-    removePin()
-    const color = pinColor()
-    const element = doc.createElement("div")
-    element.style.cssText =
-      "width:18px;height:18px;border-radius:50%;" +
-      `background:${color};` +
-      "border:3px solid #ffffff;" +
-      `box-shadow:0 0 0 3px ${color}55, 0 2px 6px rgba(0,0,0,0.35);` +
-      "pointer-events:none;"
-    mapElement.__dasolMarker = new maplibregl.Marker({
-      element,
-      anchor: "center",
-    })
-      .setLngLat([longitude, latitude])
-      .addTo(map)
-  }
-
-  function syncPin(maplibregl, map) {
-    if (isValidLocation(data.location)) {
-      drawPin(maplibregl, map, data.location.latitude, data.location.longitude)
-      hint.textContent = HINT_PICKED
+    if (!map.getSource(PIN_SOURCE)) {
+      map.addSource(PIN_SOURCE, { type: "geojson", data: collection })
+      map.addLayer({
+        id: PIN_LAYER,
+        type: "circle",
+        source: PIN_SOURCE,
+        paint: {
+          "circle-radius": 9,
+          "circle-color": pinColor(),
+          "circle-stroke-width": 3,
+          "circle-stroke-color": "#ffffff",
+          "circle-opacity": 1,
+        },
+      })
     } else {
-      removePin()
-      hint.textContent = HINT_EMPTY
+      map.getSource(PIN_SOURCE).setData(collection)
+      map.setPaintProperty(PIN_LAYER, "circle-color", pinColor())
     }
+    hint.textContent = hasPin ? HINT_PICKED : HINT_EMPTY
   }
 
   async function reverseGeocode(latitude, longitude) {
@@ -296,19 +324,21 @@ export default function (component) {
           zoom: initial ? 4 : 1.2,
           minZoom: 0.8,
           renderWorldCopies: false,
+          trackResize: true,
         })
         mapElement.__dasolMap = map
 
         map.on("load", () => {
-          map.resize()
-          syncPin(maplibregl, map)
+          refreshSize(map)
+          applyPin(map, mapElement.__dasolLocation)
         })
 
         map.on("click", async event => {
           const latitude = Number(event.lngLat.lat.toFixed(5))
           const longitude = Number(event.lngLat.lng.toFixed(5))
-          drawPin(maplibregl, map, latitude, longitude)
-          hint.textContent = HINT_PICKED
+          refreshSize(map)
+          mapElement.__dasolLocation = { latitude, longitude }
+          applyPin(map, mapElement.__dasolLocation)
           setStateValue("location", { latitude, longitude })
 
           const token = (mapElement.__dasolGeoToken || 0) + 1
@@ -325,11 +355,12 @@ export default function (component) {
           }
         })
 
-        const observer = new view.ResizeObserver(() => {
-          view.requestAnimationFrame(() => map.resize())
-        })
+        const observer = new view.ResizeObserver(() => refreshSize(map))
         observer.observe(mapElement)
+        observer.observe(parentElement)
         mapElement.__dasolResizeObserver = observer
+
+        view.addEventListener("resize", () => refreshSize(map))
 
         searchButton.addEventListener("click", () => searchPlace(map))
         input.addEventListener("keydown", event => {
@@ -338,9 +369,9 @@ export default function (component) {
             searchPlace(map)
           }
         })
-      } else if (map.loaded()) {
-        // 값(위치, 여행 구분)이 바뀌어 다시 렌더링될 때마다 핀을 현재 값에 맞춘다.
-        syncPin(maplibregl, map)
+      } else {
+        refreshSize(map)
+        applyPin(map, data.location)
       }
     })
     .catch(error => {
@@ -484,7 +515,7 @@ def _render_place_form(place=None):
         },
         on_location_change=lambda: None,
         width="stretch",
-        height=440,
+        height=460,
     )
     st.caption("지도를 클릭하면 국가와 도시/지역이 자동으로 채워집니다. 필요하면 직접 수정하세요.")
 
