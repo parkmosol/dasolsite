@@ -52,6 +52,7 @@ _LOCATION_PICKER = st.components.v2.component(
             font-family: inherit;
         }
     """,
+    js="""
 export default function (component) {
   const { data, parentElement, setStateValue } = component
   const mapElement = parentElement.querySelector(".place-location-map")
@@ -99,7 +100,7 @@ export default function (component) {
       view.__dasolLeafletPromise = Promise.all([loadCss(), loadScript()])
         .then(([, L]) => L)
         .catch(error => {
-          view.__dasolLeafletPromise = null // 실패 시 다음 렌더에서 재시도
+          view.__dasolLeafletPromise = null
           throw error
         })
     }
@@ -129,7 +130,6 @@ export default function (component) {
       )
       map.setMaxBounds([[-85, -180], [85, 180]])
 
-      // CARTO 타일: 임베디드 환경에서도 안정적으로 로드됩니다.
       L.tileLayer(
         "https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png",
         {
@@ -150,7 +150,6 @@ export default function (component) {
       })
       mapElement.__dasolMarker = null
 
-      // 컨테이너 크기 변화에 맞춰 지도 크기 재계산 (옵저버는 한 번만 등록)
       const observer = new view.ResizeObserver(() => {
         view.requestAnimationFrame(() => map.invalidateSize({ pan: false }))
       })
@@ -180,9 +179,9 @@ export default function (component) {
     }
     view.requestAnimationFrame(() => map.invalidateSize({ pan: false }))
   }
-})
-
-
+}
+""",
+)
 def _set_selected_place(place_id, update_widget=True):
     st.session_state.selected_place_id = place_id
     if update_widget:
