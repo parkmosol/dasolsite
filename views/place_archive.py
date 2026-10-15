@@ -1,10 +1,8 @@
 import datetime as dt
 import html
-import json
 import os
 import sqlite3
 import uuid
-from functools import lru_cache
 
 import pydeck as pdk
 import streamlit as st
@@ -13,10 +11,8 @@ from PIL import Image, UnidentifiedImageError
 from database import get_db
 
 PLACE_PHOTO_DIR = os.path.join("uploaded_media", "place_archive")
-WORLD_GEOJSON_PATH = os.path.join(
-    os.path.dirname(os.path.abspath(__file__)), "..", "assets", "world_countries.geojson"
-)
 PHOTO_EXTENSIONS = {"jpg", "jpeg", "png", "webp"}
+MAP_STYLE_URL = "https://tiles.openfreemap.org/styles/positron"
 os.makedirs(PLACE_PHOTO_DIR, exist_ok=True)
 
 STATUS_LABELS = {"WANT": "가고 싶은 곳", "VISITED": "다녀온 곳"}
@@ -24,21 +20,6 @@ STATUS_COLORS = {
     "WANT": [183, 123, 67, 210],
     "VISITED": [78, 119, 92, 220],
 }
-
-
-@lru_cache(maxsize=1)
-def _load_world_geojson():
-    try:
-        with open(WORLD_GEOJSON_PATH, encoding="utf-8") as geojson_file:
-            geojson = json.load(geojson_file)
-    except (OSError, json.JSONDecodeError):
-        return None
-    features = [
-        {"type": "Feature", "properties": {}, "geometry": feature["geometry"]}
-        for feature in geojson.get("features", [])
-    ]
-    return {"type": "FeatureCollection", "features": features}
-
 
 _LOCATION_PICKER = st.components.v2.component(
     "dasol.place_location_picker",
@@ -62,16 +43,12 @@ _LOCATION_PICKER = st.components.v2.component(
             border: 1px solid var(--st-color-border);
             border-radius: 8px;
             overflow: hidden;
-            background: #e8eee9;
             cursor: crosshair;
         }
         .place-location-hint {
             margin: 8px 0 0;
             color: var(--st-color-secondary);
             font-size: 0.85rem;
-        }
-        .place-location-picker .leaflet-container {
-            font-family: inherit;
         }
     """,
     js="""
@@ -83,18 +60,19 @@ export default function (component) {
 
   const doc = parentElement.ownerDocument
   const view = doc.defaultView
-  const LEAFLET_CSS = "https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
-  const LEAFLET_JS = "https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+  const STYLE_URL = "https://tiles.openfreemap.org/styles/positron"
+  const MAPLIBRE_CSS = "https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css"
+  const MAPLIBRE_JS = "https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"
 
   function loadCss() {
     return new Promise((resolve, reject) => {
-      let link = doc.querySelector("link[data-dasol-leaflet]")
+      let link = doc.querySelector("link[data-dasol-maplibre]")
       if (link && link.sheet) return resolve()
       if (!link) {
         link = doc.createElement("link")
         link.rel = "stylesheet"
-        link.href = LEAFLET_CSS
-        link.setAttribute("data-dasol-leaflet", "")
+        link.href = MAPLIBRE_CSS
+        link.setAttribute("data-dasol-maplibre", "")
         doc.head.appendChild(link)
       }
       link.addEventListener("load", () => resolve(), { once: true })
@@ -104,108 +82,98 @@ export default function (component) {
 
   function loadScript() {
     return new Promise((resolve, reject) => {
-      if (view.L) return resolve(view.L)
-      let script = doc.querySelector("script[data-dasol-leaflet]")
+      if (view.maplibregl) return resolve(view.maplibregl)
+      let script = doc.querySelector("script[data-dasol-maplibre]")
       if (!script) {
         script = doc.createElement("script")
-        script.src = LEAFLET_JS
-        script.setAttribute("data-dasol-leaflet", "")
+        script.src = MAPLIBRE_JS
+        script.setAttribute("data-dasol-maplibre", "")
         doc.head.appendChild(script)
       }
-      script.addEventListener("load", () => resolve(view.L), { once: true })
+      script.addEventListener("load", () => resolve(view.maplibregl), { once: true })
       script.addEventListener("error", reject, { once: true })
     })
   }
 
-  function loadLeaflet() {
-    if (!view.__dasolLeafletPromise) {
-      view.__dasolLeafletPromise = Promise.all([loadCss(), loadScript()])
-        .then(([, L]) => L)
+  function loadMapLibre() {
+    if (!view.__dasolMapLibrePromise) {
+      view.__dasolMapLibrePromise = Promise.all([loadCss(), loadScript()])
+        .then(([, maplibregl]) => maplibregl)
         .catch(error => {
-          view.__dasolLeafletPromise = null
+          view.__dasolMapLibrePromise = null
           throw error
         })
     }
-    return view.__dasolLeafletPromise
+    return view.__dasolMapLibrePromise
   }
 
-  loadLeaflet()
-    .then(initialize)
+  function hasLocation() {
+    return (
+      Number.isFinite(data.location?.latitude) &&
+      Number.isFinite(data.location?.longitude)
+    )
+  }
+
+  function placeMarker(maplibregl, map) {
+    if (!hasLocation()) {
+      if (mapElement.__dasolMarker) {
+        mapElement.__dasolMarker.remove()
+        mapElement.__dasolMarker = null
+      }
+      hint.textContent = "지도를 클릭해 장소 위치를 선택하세요."
+      return
+    }
+    const lngLat = [data.location.longitude, data.location.latitude]
+    if (mapElement.__dasolMarker) {
+      mapElement.__dasolMarker.setLngLat(lngLat)
+    } else {
+      const element = doc.createElement("div")
+      element.style.cssText =
+        "width:12px;height:12px;border-radius:50%;background:#B77B43;" +
+        "border:1.5px solid #ffffff;box-shadow:0 0 0 1px rgba(0,0,0,0.15);"
+      mapElement.__dasolMarker = new maplibregl.Marker({ element })
+        .setLngLat(lngLat)
+        .addTo(map)
+    }
+    hint.textContent = "선택한 위치가 핀으로 표시됩니다. 다른 곳을 클릭해 변경할 수 있습니다."
+  }
+
+  loadMapLibre()
+    .then(maplibregl => {
+      let map = mapElement.__dasolMap
+      if (!map) {
+        map = new maplibregl.Map({
+          container: mapElement,
+          style: STYLE_URL,
+          center: hasLocation()
+            ? [data.location.longitude, data.location.latitude]
+            : [20, 10],
+          zoom: hasLocation() ? 4 : 1.2,
+          minZoom: 0.8,
+          renderWorldCopies: false,
+        })
+        mapElement.__dasolMap = map
+        map.on("click", event => {
+          setStateValue("location", {
+            latitude: Number(event.lngLat.lat.toFixed(5)),
+            longitude: Number(event.lngLat.lng.toFixed(5)),
+          })
+        })
+        const observer = new view.ResizeObserver(() => {
+          view.requestAnimationFrame(() => map.resize())
+        })
+        observer.observe(mapElement)
+        mapElement.__dasolResizeObserver = observer
+        map.on("load", () => placeMarker(maplibregl, map))
+      }
+      placeMarker(maplibregl, map)
+    })
     .catch(error => {
       console.error("DASOL place location map failed to initialize.", error)
       if (!mapElement.__dasolMap) {
         hint.textContent = "지도를 불러오지 못했습니다. 네트워크 연결을 확인해 주세요."
       }
     })
-
-  function initialize(L) {
-    let map = mapElement.__dasolMap
-    if (!map) {
-      const hasInitialLocation =
-        Number.isFinite(data.location?.latitude) &&
-        Number.isFinite(data.location?.longitude)
-      map = L.map(mapElement, {
-        minZoom: 1,
-        maxBoundsViscosity: 1.0,
-        attributionControl: false,
-      }).setView(
-        hasInitialLocation
-          ? [data.location.latitude, data.location.longitude]
-          : [20, 0],
-        hasInitialLocation ? 5 : 2,
-      )
-      map.setMaxBounds([[-85, -180], [85, 180]])
-
-      if (data.world && data.world.features) {
-        L.geoJSON(data.world, {
-          interactive: false,
-          style: {
-            color: "#A9B8AE",
-            weight: 0.6,
-            fillColor: "#F4F1EA",
-            fillOpacity: 1,
-          },
-        }).addTo(map)
-      }
-
-      mapElement.__dasolMap = map
-      map.on("click", event => {
-        setStateValue("location", {
-          latitude: Number(event.latlng.lat.toFixed(5)),
-          longitude: Number(event.latlng.lng.toFixed(5)),
-        })
-      })
-      mapElement.__dasolMarker = null
-
-      const observer = new view.ResizeObserver(() => {
-        view.requestAnimationFrame(() => map.invalidateSize({ pan: false }))
-      })
-      observer.observe(mapElement)
-      mapElement.__dasolResizeObserver = observer
-    }
-
-    const hasLocation =
-      Number.isFinite(data.location?.latitude) &&
-      Number.isFinite(data.location?.longitude)
-    if (hasLocation) {
-      const location = [data.location.latitude, data.location.longitude]
-      if (mapElement.__dasolMarker) {
-        mapElement.__dasolMarker.setLatLng(location)
-      } else {
-        mapElement.__dasolMarker = L.circleMarker(location, {
-          radius: 5,
-          color: "#ffffff",
-          weight: 1.5,
-          fillColor: "#B77B43",
-          fillOpacity: 1,
-        }).addTo(map)
-      }
-      hint.textContent = "선택한 위치가 핀으로 표시됩니다. 다른 곳을 클릭해 변경할 수 있습니다."
-    } else {
-      hint.textContent = "지도를 클릭해 장소 위치를 선택하세요."
-    }
-    view.requestAnimationFrame(() => map.invalidateSize({ pan: false }))
-  }
 }
 """,
 )
@@ -316,10 +284,7 @@ def _render_place_form(place=None):
     st.markdown("**지도에서 위치 선택**")
     _LOCATION_PICKER(
         key=location_state_key,
-        data={
-            "location": {"latitude": latitude, "longitude": longitude},
-            "world": _load_world_geojson(),
-        },
+        data={"location": {"latitude": latitude, "longitude": longitude}},
         on_location_change=lambda: None,
         width="stretch",
         height=390,
@@ -559,7 +524,7 @@ def _build_map(places):
             pitch=0,
         ),
         map_provider="maplibre",
-        map_style="https://tiles.openfreemap.org/styles/positron",
+        map_style=MAP_STYLE_URL,
         tooltip={
             "html": (
                 "<b>{title}</b><br/>{city}, {country}<br/>{status_label}"
