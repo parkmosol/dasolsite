@@ -161,28 +161,27 @@ export default function (component) {
     )
   }
 
-  function placeMarker(maplibregl, map) {
-    if (!hasLocation()) {
-      if (mapElement.__dasolMarker) {
-        mapElement.__dasolMarker.remove()
-        mapElement.__dasolMarker = null
-      }
-      hint.textContent = "지도를 클릭해 장소 위치를 선택하세요."
-      return
-    }
-    const lngLat = [data.location.longitude, data.location.latitude]
-    if (mapElement.__dasolMarker) {
-      mapElement.__dasolMarker.setLngLat(lngLat)
-    } else {
+  function showMarker(maplibregl, map, longitude, latitude) {
+    if (!mapElement.__dasolMarker) {
       const element = doc.createElement("div")
       element.style.cssText =
         "width:12px;height:12px;border-radius:50%;background:#B77B43;" +
         "border:1.5px solid #ffffff;box-shadow:0 0 0 1px rgba(0,0,0,0.15);"
       mapElement.__dasolMarker = new maplibregl.Marker({ element })
-        .setLngLat(lngLat)
-        .addTo(map)
     }
+    mapElement.__dasolMarker.setLngLat([longitude, latitude]).addTo(map)
     hint.textContent = "선택한 위치가 핀으로 표시됩니다. 다른 곳을 클릭해 변경할 수 있습니다."
+  }
+
+  function syncMarker(maplibregl, map) {
+    if (hasLocation()) {
+      showMarker(maplibregl, map, data.location.longitude, data.location.latitude)
+    } else {
+      if (mapElement.__dasolMarker) {
+        mapElement.__dasolMarker.remove()
+      }
+      hint.textContent = "지도를 클릭해 장소 위치를 선택하세요."
+    }
   }
 
   async function searchPlace(map) {
@@ -244,18 +243,19 @@ export default function (component) {
           renderWorldCopies: false,
         })
         mapElement.__dasolMap = map
+
         map.on("click", event => {
-          setStateValue("location", {
-            latitude: Number(event.lngLat.lat.toFixed(5)),
-            longitude: Number(event.lngLat.lng.toFixed(5)),
-          })
+          const latitude = Number(event.lngLat.lat.toFixed(5))
+          const longitude = Number(event.lngLat.lng.toFixed(5))
+          showMarker(maplibregl, map, longitude, latitude)
+          setStateValue("location", { latitude, longitude })
         })
+
         const observer = new view.ResizeObserver(() => {
           view.requestAnimationFrame(() => map.resize())
         })
         observer.observe(mapElement)
         mapElement.__dasolResizeObserver = observer
-        map.on("load", () => placeMarker(maplibregl, map))
 
         searchButton.addEventListener("click", () => searchPlace(map))
         input.addEventListener("keydown", event => {
@@ -265,7 +265,12 @@ export default function (component) {
           }
         })
       }
-      placeMarker(maplibregl, map)
+
+      if (map.loaded()) {
+        syncMarker(maplibregl, map)
+      } else {
+        map.once("load", () => syncMarker(maplibregl, map))
+      }
     })
     .catch(error => {
       console.error("DASOL place location map failed to initialize.", error)
